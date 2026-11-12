@@ -2,14 +2,42 @@ const jwt = require("jsonwebtoken");
 
 exports.protect = (...roles) => (req, res, next) => {
   try {
-    const token = (req.headers.authorization || "").split(" ")[1];
-    const user = jwt.verify(token, process.env.JWT_SECRET);
-    if (roles.length && !roles.includes(user.role)) {
-      return res.status(403).json({ message: "Not allowed" });
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        message: "Authentication required. Please log in.",
+      });
     }
-    req.user = user;
+
+    const token = authHeader.split(" ")[1];
+
+    const user = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (!user.id || !user.role) {
+      return res.status(401).json({
+        message: "Invalid authentication token.",
+      });
+    }
+
+    const userRole = user.role.toLowerCase();
+
+    if (roles.length && !roles.includes(userRole)) {
+      return res.status(403).json({
+        message: "You are not authorized to access this resource.",
+      });
+    }
+
+    req.user = {
+      id: user.id,
+      role: userRole,
+    };
+
     next();
-  } catch {
-    res.status(401).json({ message: "Please log in" });
+
+  } catch (error) {
+    return res.status(401).json({
+      message: "Session expired or invalid. Please log in again.",
+    });
   }
 };

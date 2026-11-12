@@ -5,9 +5,15 @@ import { useStore } from "@/lib/useStore";
 import { SCENARIOS, SEED, Workshop } from "@/lib/data";
 import { QuizStore, certificateReady, earnedBadges, improvement, pct, progress } from "@/lib/score";
 import Quiz from "@/components/Quiz";
+import { getWorkshops } from "@/lib/api";
 
 export default function Learner() {
-  const [ws] = useStore<Workshop[]>("cb.workshops", SEED);
+  const [ws, setWs] = useState<Workshop[]>([]);
+useEffect(() => {
+  getWorkshops()
+    .then((list) => setWs(list.map((w: any) => ({ ...w, id: w._id, registered: w.registered ?? 0, completed: w.completed ?? 0 }))))
+    .catch(() => {});
+}, []);
   const [enrolled, setEnrolled] = useStore<string[]>("cb.enrolled", []);
   const [done, setDone] = useStore<Record<string, number>>("cb.scenarios", {});
   const [first, setFirst] = useStore<Record<string, boolean>>("cb.first", {});
