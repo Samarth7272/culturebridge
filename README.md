@@ -177,5 +177,5 @@ This is a front-end demo. These items from the PRD are **not built yet**:
 
 ## 👤 Author
 
-**Samarth Shukla**, B.Tech CSE (2027)
+**Samarth Shukla**,
 [LinkedIn](https://linkedin.com/in/samarth-shukla-b72003293) · [GitHub](https://github.com/Samarth7272) · samarthworldwide@gmail.com
