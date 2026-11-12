@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { CalendarDays, Download, Plus, Trash2, Users, CheckCircle2, ClipboardList } from "lucide-react";
 import { useStore } from "@/lib/useStore";
@@ -12,6 +12,11 @@ export default function Admin() {
   const [f, setF] = useState({ title: "", cat: CATS[0], date: "", capacity: "20", facilitator: "" });
   const [err, setErr] = useState<Record<string, string>>({});
   const reg = ws.reduce((a, w) => a + w.registered, 0), done = ws.reduce((a, w) => a + w.completed, 0);
+  useEffect(() => {
+  const u = localStorage.getItem("user");
+  if (!u) { window.location.href = "/login"; return; }
+  if (JSON.parse(u).role !== "facilitator") window.location.href = "/login";
+}, []);
 
   function add(e: React.FormEvent) {
     e.preventDefault();

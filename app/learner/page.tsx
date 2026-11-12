@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Award, BadgeCheck, Printer, RotateCcw, Trophy } from "lucide-react";
 import { useStore } from "@/lib/useStore";
 import { SCENARIOS, SEED, Workshop } from "@/lib/data";
@@ -20,6 +20,13 @@ export default function Learner() {
   const badges = earnedBadges({ enrolled: enrolled.length, scenariosDone: n, scenarioTotal: T, quiz });
   const ready = certificateReady(n, T, quiz);
   const preDone = !!quiz.pre;
+  useEffect(() => {
+  const u = localStorage.getItem("user");
+  if (!u) { window.location.href = "/login"; return; }
+  const user = JSON.parse(u);
+  if (user.role !== "learner") { window.location.href = "/login"; return; }
+  setName(user.name);
+}, []);
   function reset() { setDone({}); setFirst({}); setQuiz({}); setPick({}); }
   return (
     <div className="space-y-8">

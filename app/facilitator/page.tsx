@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UserCheck } from "lucide-react";
 import { useStore } from "@/lib/useStore";
 import { PEOPLE, SEED, Workshop } from "@/lib/data";
@@ -12,6 +12,11 @@ export default function Facilitator() {
   const id = sel || mine[0]?.id || "";
   const present = att[id] ?? [];
   const toggle = (p: string) => setAtt({ ...att, [id]: present.includes(p) ? present.filter(x => x !== p) : [...present, p] });
+  useEffect(() => {
+  const u = localStorage.getItem("user");
+  if (!u) { window.location.href = "/login"; return; }
+  if (JSON.parse(u).role !== "facilitator") window.location.href = "/login";
+}, []);
   return (
     <div className="space-y-6">
       <h1 className="font-display text-4xl font-bold">Trainer workspace</h1>
