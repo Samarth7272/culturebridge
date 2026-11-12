@@ -15,33 +15,29 @@ const NAV_LINKS = [
 export default function Nav() {
   const pathname = usePathname();
   const router = useRouter();
-  const [role, setRole] = useState<string | null>(null);
+
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
-    try {
-      const storedUser = localStorage.getItem("user");
+    function checkLogin() {
+      const token = localStorage.getItem("token");
+      const user = localStorage.getItem("user");
 
-      if (storedUser) {
-        const user = JSON.parse(storedUser);
-        setRole(user.role?.toLowerCase() ?? null);
-      } else {
-        setRole(null);
-      }
-    } catch {
-      localStorage.removeItem("user");
-      setRole(null);
+      setIsLoggedIn(Boolean(token && user));
     }
+
+    checkLogin();
   }, [pathname]);
 
   function handleLogout() {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    setRole(null);
+
+    setIsLoggedIn(false);
+
     router.replace("/");
     router.refresh();
   }
-
-  const isLoggedIn = Boolean(role);
 
   return (
     <nav className="flex flex-wrap items-center justify-between gap-4 py-3">
@@ -72,6 +68,7 @@ export default function Nav() {
 
         {isLoggedIn ? (
           <button
+            type="button"
             onClick={handleLogout}
             className="flex items-center gap-2 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 px-5 py-2 font-semibold text-white transition hover:scale-105"
           >

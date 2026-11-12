@@ -1,5 +1,6 @@
-const API =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+export const API =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") ||
+  "http://localhost:5000/api";
 
 async function apiRequest(path: string, options: RequestInit = {}) {
   const token =
@@ -7,21 +8,42 @@ async function apiRequest(path: string, options: RequestInit = {}) {
       ? localStorage.getItem("token")
       : null;
 
-  const res = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
 
-  const data = await res.json().catch(() => ({}));
+  try {
+    const res = await fetch(`${API}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
 
-  if (!res.ok) {
-    throw new Error(data.message || "Something went wrong");
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(
+        data.message || `Request failed with status ${res.status}`
+      );
+    }
+
+    return data;
+  } catch (error: any) {
+    if (error.name === "AbortError") {
+      throw new Error("Request timed out. Check whether the backend is running.");
+    }
+
+    if (error instanceof TypeError) {
+      throw new Error("Cannot connect to the backend. Check the API URL.");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return data;
 }
 
 export async function post(path: string, body: object) {
@@ -49,8 +71,29 @@ export async function updateWorkshop(id: string, body: object) {
   });
 }
 
+export async function saveAttendance(id: string, attendance: string[]) {
+  return apiRequest(`/workshops/${id}/attendance`, {
+    method: "PATCH",
+    body: JSON.stringify({ attendance }),
+  });
+}
+
 export async function deleteWorkshop(id: string) {
-  await apiRequest(`/workshops/${id}`, {
+  return apiRequest(`/workshops/${id}`, {
+    method: "DELETE",
+  });
+}
+
+// Employee enrollment
+export async function enrollWorkshop(id: string) {
+  return apiRequest(`/workshops/${id}/enroll`, {
+    method: "POST",
+  });
+}
+
+// Employee leaves workshop
+export async function leaveWorkshop(id: string) {
+  return apiRequest(`/workshops/${id}/enroll`, {
     method: "DELETE",
   });
 }
