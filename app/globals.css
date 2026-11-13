@@ -1,14 +1,266 @@
-@tailwind base; @tailwind components; @tailwind utilities;
-body{background:radial-gradient(60rem 40rem at 10% -10%,#2b1a6b66,transparent),radial-gradient(50rem 35rem at 100% 0,#0d6b5a66,transparent),#0a1020;color:#e8edf8;min-height:100vh}
-.glass{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(14px);border-radius:1.25rem;box-shadow:0 10px 40px -12px rgba(0,0,0,.6)}
-.glow{position:relative}.glow::before{content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1px;background:conic-gradient(from var(--a,0deg),#10b981,#4361ee,#8b5cf6,#ff6f61,#f6c453,#10b981);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:spin 8s linear infinite;pointer-events:none}
-@property --a{syntax:"<angle>";inherits:false;initial-value:0deg}
-@keyframes spin{to{--a:360deg}}@keyframes float{50%{transform:translateY(-12px)}}@keyframes dash{to{stroke-dashoffset:-60}}
-.float{animation:float 6s ease-in-out infinite}.dash{stroke-dasharray:6 6;animation:dash 3s linear infinite}
-.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.65rem 1.1rem;border-radius:.8rem;font-weight:600;transition:transform .15s}
-.btn:hover{transform:translateY(-2px)}.btn-pri{background:linear-gradient(90deg,#0b7a55,#3451d1);color:#fff}.btn-ghost{border:1px solid rgba(255,255,255,.25)}
-.input{width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);border-radius:.7rem;padding:.6rem .8rem;color:#fff}
-.input option{color:#000}
-:focus-visible{outline:3px solid #f6c453;outline-offset:2px}
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-@media print{body{background:#fff!important;color:#111!important}body *{visibility:hidden}#cert,#cert *{visibility:visible}#cert{position:absolute;left:0;top:0;width:100%;color:#111;text-align:center}#cert::before{display:none}.noprint{display:none!important}}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ================================
+   CULTUREBRIDGE DESIGN SYSTEM
+================================ */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --surface: #111a2e;
+  --surface-2: #17233a;
+  --card: rgba(22, 34, 56, 0.82);
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --border: rgba(148, 163, 184, 0.16);
+  --primary: #38bdf8;
+  --accent: #2dd4bf;
+  --shadow: 0 16px 45px rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f7fb;
+  --surface: #ffffff;
+  --surface-2: #edf2f8;
+  --card: rgba(255, 255, 255, 0.95);
+  --text: #172033;
+  --muted: #64748b;
+  --border: rgba(51, 65, 85, 0.13);
+  --primary: #2563eb;
+  --accent: #0f9f91;
+  --shadow: 0 12px 35px rgba(30, 41, 59, 0.07);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      55rem 35rem at 5% -10%,
+      rgba(99, 102, 241, 0.12),
+      transparent
+    ),
+    radial-gradient(
+      45rem 30rem at 100% 0%,
+      rgba(20, 184, 166, 0.09),
+      transparent
+    ),
+    var(--bg);
+  color: var(--text);
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+* {
+  border-color: var(--border);
+}
+
+::selection {
+  background: rgba(45, 212, 191, 0.3);
+  color: var(--text);
+}
+
+/* ================================
+   CARDS
+================================ */
+
+.glass {
+  background: var(--card);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  border-radius: 1rem;
+  box-shadow: var(--shadow);
+  color: var(--text);
+}
+
+.dashboard-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: var(--shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dashboard-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+/* ================================
+   BUTTONS
+================================ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.1rem;
+  border-radius: 0.7rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-pri {
+  background: linear-gradient(110deg, #0f9f91, #2563eb);
+  color: #ffffff;
+  border: 0;
+}
+
+.btn-pri:hover {
+  filter: brightness(1.1);
+}
+
+.btn-ghost {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-ghost:hover {
+  background: var(--card);
+}
+
+/* ================================
+   INPUTS
+================================ */
+
+.input {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--surface-2);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+}
+
+.input option {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* ================================
+   TEXT AND UTILITIES
+================================ */
+
+.text-muted {
+  color: var(--muted);
+}
+
+.border-theme {
+  border-color: var(--border);
+}
+
+.glow {
+  position: relative;
+  isolation: isolate;
+}
+
+.float {
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes float {
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 3px;
+}
+
+/* ================================
+   SCROLLBAR
+================================ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #64748b transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #64748b;
+  border-radius: 20px;
+}
+
+/* ================================
+   CERTIFICATE PRINT
+================================ */
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #111111 !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  #cert,
+  #cert * {
+    visibility: visible;
+  }
+
+  #cert {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    color: #111111 !important;
+    text-align: center;
+    background: #ffffff !important;
+  }
+
+  #cert::before {
+    display: none;
+  }
+
+  .noprint {
+    display: none !important;
+  }
+}
+
+/* ================================
+   ACCESSIBILITY
+================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

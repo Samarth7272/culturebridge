@@ -1,26 +1,25 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   CalendarDays,
+  Users,
+  BookOpen,
+  CheckCircle2,
+  Clock3,
+  Search,
   Download,
   Plus,
   Trash2,
-  Users,
-  CheckCircle2,
-  ClipboardList,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  BarChart3,
+  Sparkles,
+  AlertCircle,
+  X,
+  GraduationCap,
 } from "lucide-react";
 
 import {
@@ -31,62 +30,103 @@ import {
 } from "@/lib/api";
 
 import { CATS, Workshop } from "@/lib/data";
+import DashboardLayout from "@/components/DashboardLayout";
+import { useTheme } from "@/components/ThemeProvider";
 
-const trend = [
-  { w: "W1", r: 12 },
-  { w: "W2", r: 28 },
-  { w: "W3", r: 41 },
-  { w: "W4", r: 62 },
-  { w: "W5", r: 86 },
+type WorkshopRow = {
+  id: string;
+  title: string;
+  category: string;
+  facilitator: string;
+  date: string;
+  capacity: number;
+  registered: number;
+  completed: number;
+  status: string;
+};
+
+const panel =
+  "rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm";
+
+const inputStyle =
+  "w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text)] outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15";
+
+function getText(value: any, fallback = ""): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+
+  if (value && typeof value === "object") {
+    if (typeof value.name === "string") return value.name;
+    if (typeof value.title === "string") return value.title;
+    if (typeof value.email === "string") return value.email;
+    if (typeof value.label === "string") return value.label;
+  }
+
+  return fallback;
+}
+
+function normalizeWorkshop(item: any): WorkshopRow {
+  return {
+    id: String(item?._id || item?.id || ""),
+    title: getText(item?.title, "Untitled workshop"),
+    category: getText(item?.category, "General"),
+    facilitator: getText(item?.facilitator, "Not assigned"),
+    date: getText(item?.date, ""),
+    capacity: Number(item?.capacity) || 0,
+    registered: Number(item?.registered) || 0,
+    completed: Number(item?.completed) || 0,
+    status: getText(item?.status, "Draft"),
+  };
+}
+
+const trendData = [
+  { week: "W1", participants: 12 },
+  { week: "W2", participants: 28 },
+  { week: "W3", participants: 41 },
+  { week: "W4", participants: 62 },
+  { week: "W5", participants: 86 },
 ];
-
-const norm = (w: any): Workshop => ({
-  ...w,
-  id: w._id ?? w.id,
-  registered: w.registered ?? 0,
-  completed: w.completed ?? 0,
-});
 
 export default function Admin() {
   const router = useRouter();
+  const { theme } = useTheme();
+  const dark = theme === "dark";
 
-  const [ws, setWs] = useState<Workshop[]>([]);
+  const [workshops, setWorkshops] = useState<WorkshopRow[]>([]);
   const [authorized, setAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
 
-  const [f, setF] = useState({
+  const [form, setForm] = useState({
     title: "",
-    cat: CATS[0],
-    date: "",
-    capacity: "20",
+    category: "",
     facilitator: "",
+    date: "",
+    capacity: "30",
   });
 
-  const [err, setErr] = useState<Record<string, string>>({});
-
-  const reg = ws.reduce((a, w) => a + w.registered, 0);
-  const done = ws.reduce((a, w) => a + w.completed, 0);
-
-  // Check whether the logged-in user is an admin
   useEffect(() => {
     try {
-      const storedUser = localStorage.getItem("user");
+      const user = JSON.parse(
+        localStorage.getItem("user") || "{}"
+      );
 
-      if (!storedUser) {
+      if (!user || !user.role) {
         router.replace("/login");
         return;
       }
 
-      const user = JSON.parse(storedUser);
-      const role = String(user.role ?? "").toLowerCase().trim();
+      const role = String(user.role).toLowerCase();
 
       if (role !== "admin") {
-        const routes: Record<string, string> = {
-          facilitator: "/facilitator",
-          learner: "/learner",
-        };
-
-        router.replace(routes[role] || "/login");
+        if (role === "facilitator" || role === "trainer") {
+          router.replace("/facilitator");
+        } else {
+          router.replace("/learner");
+        }
         return;
       }
 
@@ -98,407 +138,793 @@ export default function Admin() {
     }
   }, [router]);
 
-  // Load workshops only after admin authorization
-  useEffect(() => {
-    if (!authorized) return;
+  async function loadWorkshops() {
+    setLoading(true);
+    setError("");
 
-    async function load() {
-      try {
-        const data = await getWorkshops();
-        setWs(data.map(norm));
-      } catch (error) {
-        console.error("Unable to load workshops:", error);
-      } finally {
-        setLoading(false);
-      }
+    try {
+      const response: any = await getWorkshops();
+
+      const records = Array.isArray(response)
+        ? response
+        : Array.isArray(response?.workshops)
+          ? response.workshops
+          : Array.isArray(response?.data)
+            ? response.data
+            : Array.isArray(response?.data?.workshops)
+              ? response.data.workshops
+              : [];
+
+      setWorkshops(records.map(normalizeWorkshop));
+    } catch (err: any) {
+      setError(err?.message || "Unable to load workshops.");
+    } finally {
+      setLoading(false);
     }
+  }
 
-    load();
+  useEffect(() => {
+    if (authorized) {
+      loadWorkshops();
+    }
   }, [authorized]);
 
-  // Create workshop
-  async function add(e: React.FormEvent) {
+  async function createWorkshop(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    setError("");
+    setNotice("");
 
-    const x: Record<string, string> = {};
-    const cap = Number(f.capacity);
-
-    if (f.title.trim().length < 4) {
-      x.title = "Enter a title of at least 4 characters.";
+    if (form.title.trim().length < 4) {
+      setError("Workshop title must have at least 4 characters.");
+      return;
     }
 
-    if (!f.date) {
-      x.date = "Choose a date.";
+    if (!form.date || new Date(form.date) < new Date(
+      new Date().toDateString()
+    )) {
+      setError("Please select today or a future date.");
+      return;
     }
 
-    if (!Number.isInteger(cap) || cap < 5 || cap > 200) {
-      x.capacity = "Capacity must be a whole number from 5 to 200.";
+    const capacity = Number(form.capacity);
+
+    if (!Number.isInteger(capacity) || capacity < 5 || capacity > 200) {
+      setError("Capacity must be between 5 and 200.");
+      return;
     }
 
-    if (!f.facilitator.trim()) {
-      x.facilitator = "Enter a facilitator name.";
+    if (!form.facilitator.trim()) {
+      setError("Please enter a facilitator name.");
+      return;
     }
 
-    setErr(x);
-
-    if (Object.keys(x).length > 0) return;
+    setSaving(true);
 
     try {
-      const created = await addWorkshop({
-        title: f.title.trim(),
-        cat: f.cat,
-        date: f.date,
-        capacity: cap,
-        facilitator: f.facilitator.trim(),
+      const payload = {
+        title: form.title.trim(),
+        category: form.category || "General",
+        facilitator: form.facilitator.trim(),
+        date: form.date,
+        capacity,
         status: "Draft",
-      });
+      };
 
-      setWs((prev) => [...prev, norm(created)]);
+      await addWorkshop(payload);
 
-      setF({
+      setForm({
         title: "",
-        cat: CATS[0],
-        date: "",
-        capacity: "20",
+        category: "",
         facilitator: "",
+        date: "",
+        capacity: "30",
       });
 
-      setErr({});
-    } catch (error: any) {
-      setErr({ title: error.message || "Unable to create workshop." });
+      setNotice("Workshop created successfully.");
+      await loadWorkshops();
+    } catch (err: any) {
+      setError(err?.message || "Could not create workshop.");
+    } finally {
+      setSaving(false);
     }
   }
 
-  // Publish or unpublish workshop
-  async function toggle(id: string) {
-    const w = ws.find((x) => x.id === id);
-    if (!w) return;
+  async function toggleWorkshop(workshop: WorkshopRow) {
+    setError("");
+    setNotice("");
 
-    const status =
-      w.status === "Draft" ? "Published" : "Draft";
+    const nextStatus =
+      workshop.status.toLowerCase() === "published"
+        ? "Draft"
+        : "Published";
 
     try {
-      await updateWorkshop(id, { status });
+      await updateWorkshop(workshop.id, {
+        status: nextStatus,
+      });
 
-      setWs((prev) =>
-        prev.map((x) =>
-          x.id === id ? { ...x, status } : x
-        )
-      );
-    } catch (error) {
-      console.error("Unable to update workshop:", error);
+      setNotice(`Workshop moved to ${nextStatus}.`);
+      await loadWorkshops();
+    } catch (err: any) {
+      setError(err?.message || "Unable to update workshop.");
     }
   }
 
-  // Delete workshop
-  async function remove(id: string) {
+  async function removeWorkshop(id: string) {
     if (!window.confirm("Are you sure you want to delete this workshop?")) {
       return;
     }
 
+    setError("");
+    setNotice("");
+
     try {
       await deleteWorkshop(id);
-      setWs((prev) => prev.filter((x) => x.id !== id));
-    } catch (error) {
-      console.error("Unable to delete workshop:", error);
+      setNotice("Workshop deleted successfully.");
+      await loadWorkshops();
+    } catch (err: any) {
+      setError(err?.message || "Unable to delete workshop.");
     }
   }
-
-  // Export CSV report
-  function csv() {
-    const rows = [
-      [
-        "Title",
-        "Category",
-        "Date",
-        "Registered",
-        "Capacity",
-        "Completed",
-        "Status",
-      ],
-      ...ws.map((w) => [
-        w.title,
-        w.cat,
-        w.date,
-        w.registered,
-        w.capacity,
-        w.completed,
-        w.status,
-      ]),
+  function exportCSV() {
+    const headers = [
+      "Title",
+      "Category",
+      "Facilitator",
+      "Date",
+      "Capacity",
+      "Registered",
+      "Completed",
+      "Status",
     ];
 
-    const content = rows
-      .map((r) =>
-        r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")
+    const rows = filtered.map((w) => [
+      w.title,
+      w.category,
+      w.facilitator,
+      w.date,
+      w.capacity,
+      w.registered,
+      w.completed,
+      w.status,
+    ]);
+
+    const csvContent = [headers, ...rows]
+      .map((row) =>
+        row
+          .map((value) =>
+            `"${String(value ?? "").replace(/"/g, '""')}"`
+          )
+          .join(",")
       )
       .join("\n");
 
-    const blob = new Blob([content], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
+    const blob = new Blob([csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
 
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "culturebridge-report.csv";
-    a.click();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = "culturebridge-workshops.csv";
+    link.click();
 
     URL.revokeObjectURL(url);
   }
 
-  const cards = [
-    [ClipboardList, "Workshops", ws.length, "text-emerald"],
-    [Users, "Registrations", reg, "text-royal"],
-    [
-      CheckCircle2,
-      "Completion",
-      reg ? Math.round((done / reg) * 100) + "%" : "0%",
-      "text-gold",
-    ],
-  ] as const;
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) return workshops;
+
+    return workshops.filter((w) =>
+      [
+        w.title,
+        w.category,
+        w.facilitator,
+        w.status,
+      ].some((value) => value.toLowerCase().includes(query))
+    );
+  }, [workshops, search]);
+
+  const totalWorkshops = workshops.length;
+
+  const publishedCount = workshops.filter(
+    (w) => w.status.toLowerCase() === "published"
+  ).length;
+
+  const totalRegistered = workshops.reduce(
+    (sum, w) => sum + w.registered,
+    0
+  );
+
+  const totalCompleted = workshops.reduce(
+    (sum, w) => sum + w.completed,
+    0
+  );
+
+  const completionRate =
+    totalRegistered > 0
+      ? Math.round((totalCompleted / totalRegistered) * 100)
+      : 0;
 
   if (!authorized || loading) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <p className="text-lg text-white/70">
-          Checking admin access...
-        </p>
-      </div>
+      <DashboardLayout role="admin">
+        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-teal-500/20 border-t-teal-500" />
+          <p className="text-sm text-[var(--muted)]">
+            Loading your admin dashboard...
+          </p>
+        </div>
+      </DashboardLayout>
     );
   }
 
   return (
-    <div className="space-y-8">
+    <DashboardLayout role="admin">
+      <div className="space-y-7">
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-4xl font-bold">
-          Admin dashboard
-        </h1>
+        {/* Welcome section */}
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 p-6 text-white shadow-xl sm:p-8">
+          <div className="absolute -right-16 -top-20 h-64 w-64 rounded-full bg-teal-400/10 blur-3xl" />
+          <div className="absolute -bottom-20 right-1/3 h-52 w-52 rounded-full bg-blue-500/10 blur-3xl" />
 
-        <button onClick={csv} className="btn btn-ghost">
-          <Download size={18} aria-hidden />
-          Export CSV
-        </button>
-      </div>
+          <div className="relative z-10 flex flex-col justify-between gap-6 sm:flex-row sm:items-center">
+            <div>
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-medium text-teal-200">
+                <Sparkles size={14} />
+                ADMIN WORKSPACE
+              </div>
 
-      {/* Dashboard statistics */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        {cards.map(([I, label, value, color]) => (
-          <div key={label} className="glass glow p-5">
-            <I className={color} aria-hidden />
-            <p className="mt-2 text-3xl font-bold">{value}</p>
-            <p className="text-sm text-white/70">{label}</p>
-          </div>
-        ))}
-      </div>
+              <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                Welcome to CultureBridge
+              </h2>
 
-      {/* Charts */}
-      <div className="grid gap-4 lg:grid-cols-2">
-
-        <section className="glass p-5" aria-label="Registrations trend">
-          <h2 className="mb-3 font-semibold">
-            Registrations over time
-          </h2>
-
-          <div className="h-60">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trend}>
-                <CartesianGrid stroke="#ffffff22" />
-                <XAxis dataKey="w" stroke="#cbd5e1" />
-                <YAxis stroke="#cbd5e1" />
-                <Tooltip
-                  contentStyle={{
-                    background: "#0a1020",
-                    border: "1px solid #ffffff33",
-                  }}
-                />
-                <Area
-                  dataKey="r"
-                  name="Registrations"
-                  stroke="#2dd4bf"
-                  fill="#4361ee"
-                  fillOpacity={0.4}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </section>
-
-        <section className="glass p-5" aria-label="Completion by workshop">
-          <h2 className="mb-3 font-semibold">
-            Registered vs completed
-          </h2>
-
-          <div className="h-60">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={ws.map((w, i) => ({
-                  n: "W" + (i + 1),
-                  Registered: w.registered,
-                  Completed: w.completed,
-                }))}
-              >
-                <CartesianGrid stroke="#ffffff22" />
-                <XAxis dataKey="n" stroke="#cbd5e1" />
-                <YAxis stroke="#cbd5e1" />
-                <Tooltip
-                  contentStyle={{
-                    background: "#0a1020",
-                    border: "1px solid #ffffff33",
-                  }}
-                />
-                <Bar
-                  dataKey="Registered"
-                  fill="#8b5cf6"
-                  radius={4}
-                />
-                <Bar
-                  dataKey="Completed"
-                  fill="#10b981"
-                  radius={4}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </section>
-
-      </div>
-
-      {/* Workshop list */}
-      <section className="glass p-5" aria-label="Workshops">
-        <h2 className="mb-3 flex items-center gap-2 font-semibold">
-          <CalendarDays size={18} aria-hidden />
-          Workshops and upcoming calendar
-        </h2>
-
-        {ws.length === 0 ? (
-          <p className="text-white/70">
-            No workshops yet. Use the form below to create your first one.
-          </p>
-        ) : (
-          <ul className="divide-y divide-white/10">
-            {[...ws]
-              .sort((a, b) => a.date.localeCompare(b.date))
-              .map((w) => (
-                <li
-                  key={w.id}
-                  className="flex flex-wrap items-center justify-between gap-2 py-3"
-                >
-                  <div>
-                    <p className="font-medium">{w.title}</p>
-                    <p className="text-sm text-white/70">
-                      {w.date} · {w.cat} · {w.facilitator} ·{" "}
-                      {w.registered}/{w.capacity} registered
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => toggle(w.id)}
-                      className={`rounded-full px-3 py-1 text-sm font-medium text-ink ${
-                        w.status === "Published"
-                          ? "bg-emerald"
-                          : "bg-gold"
-                      }`}
-                    >
-                      {w.status}
-                    </button>
-
-                    <button
-                      onClick={() => remove(w.id)}
-                      className="rounded-lg p-2 hover:bg-white/10"
-                      aria-label={`Delete ${w.title}`}
-                    >
-                      <Trash2 size={18} className="text-coral" />
-                    </button>
-                  </div>
-                </li>
-              ))}
-          </ul>
-        )}
-      </section>
-
-      {/* Create workshop form */}
-      <form
-        onSubmit={add}
-        noValidate
-        className="glass grid gap-3 p-5 md:grid-cols-2"
-        aria-label="Create workshop"
-      >
-        <h2 className="font-semibold md:col-span-2">
-          Create a workshop
-        </h2>
-
-        {(
-          [
-            ["title", "Title", "text"],
-            ["date", "Date", "date"],
-            ["capacity", "Capacity", "number"],
-            ["facilitator", "Facilitator", "text"],
-          ] as const
-        ).map(([key, label, type]) => (
-          <div key={key}>
-            <label
-              htmlFor={key}
-              className="mb-1 block text-sm"
-            >
-              {label}
-            </label>
-
-            <input
-              id={key}
-              type={type}
-              className="input"
-              value={f[key]}
-              onChange={(e) =>
-                setF({ ...f, [key]: e.target.value })
-              }
-              aria-invalid={!!err[key]}
-              aria-describedby={
-                err[key] ? key + "-e" : undefined
-              }
-            />
-
-            {err[key] && (
-              <p
-                id={key + "-e"}
-                role="alert"
-                className="mt-1 text-sm text-coral"
-              >
-                {err[key]}
+              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
+                Manage workshops, monitor participation, and help your
+                organization build stronger cross-cultural collaboration.
               </p>
-            )}
+            </div>
+
+            <button
+              type="button"
+              onClick={loadWorkshops}
+              className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/20 sm:self-center"
+            >
+              <RefreshCw size={16} />
+              Refresh data
+            </button>
           </div>
-        ))}
+        </section>
 
-        <div>
-          <label
-            htmlFor="cat"
-            className="mb-1 block text-sm"
-          >
-            Category
-          </label>
+        {/* Feedback messages */}
+        {notice && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-600">
+            <span className="flex items-center gap-2">
+              <CheckCircle2 size={18} />
+              {notice}
+            </span>
 
-          <select
-            id="cat"
-            className="input"
-            value={f.cat}
-            onChange={(e) =>
-              setF({ ...f, cat: e.target.value })
-            }
-          >
-            {CATS.map((category) => (
-              <option key={category}>{category}</option>
-            ))}
-          </select>
+            <button
+              type="button"
+              onClick={() => setNotice("")}
+              aria-label="Dismiss message"
+            >
+              <X size={17} />
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-500">
+            <span className="flex items-center gap-2">
+              <AlertCircle size={18} />
+              {error}
+            </span>
+
+            <button
+              type="button"
+              onClick={() => setError("")}
+              aria-label="Dismiss error"
+            >
+              <X size={17} />
+            </button>
+          </div>
+        )}
+
+        {/* Statistics */}
+        <section>
+          <div className="mb-4">
+            <h3 className="text-lg font-bold text-[var(--text)]">
+              Workspace overview
+            </h3>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              A summary of your workshop activity.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className={`${panel} p-5`}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--muted)]">
+                  Total workshops
+                </span>
+                <span className="rounded-xl bg-blue-500/10 p-3 text-blue-500">
+                  <CalendarDays size={21} />
+                </span>
+              </div>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">
+                {totalWorkshops}
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Workshops in your workspace
+              </p>
+            </div>
+
+            <div className={`${panel} p-5`}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--muted)]">
+                  Published
+                </span>
+                <span className="rounded-xl bg-emerald-500/10 p-3 text-emerald-500">
+                  <BookOpen size={21} />
+                </span>
+              </div>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">
+                {publishedCount}
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Live workshops
+              </p>
+            </div>
+
+            <div className={`${panel} p-5`}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--muted)]">
+                  Participants
+                </span>
+                <span className="rounded-xl bg-violet-500/10 p-3 text-violet-500">
+                  <Users size={21} />
+                </span>
+              </div>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">
+                {totalRegistered}
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Total registrations
+              </p>
+            </div>
+
+            <div className={`${panel} p-5`}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--muted)]">
+                  Completion rate
+                </span>
+                <span className="rounded-xl bg-teal-500/10 p-3 text-teal-500">
+                  <GraduationCap size={21} />
+                </span>
+              </div>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">
+                {completionRate}%
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Based on recorded completions
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Analytics */}
+        <section id="analytics" className="grid gap-4 xl:grid-cols-3">
+          <div className={`${panel} p-5 xl:col-span-2`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-[var(--text)]">
+                  Participation trend
+                </h3>
+                <p className="mt-1 text-xs text-[var(--muted)]">
+                  Illustrative sample trend, not live registration history.
+                </p>
+              </div>
+
+              <span className="rounded-lg bg-teal-500/10 px-3 py-1.5 text-xs font-semibold text-teal-600">
+                Sample data
+              </span>
+            </div>
+
+            <div className="mt-6 flex h-48 items-end gap-3 sm:gap-5">
+              {trendData.map((item) => (
+                <div
+                  key={item.week}
+                  className="flex flex-1 flex-col items-center gap-2"
+                >
+                  <span className="text-xs font-semibold text-[var(--text)]">
+                    {item.participants}
+                  </span>
+
+                  <div className="flex h-36 w-full items-end overflow-hidden rounded-t-lg bg-[var(--surface-2)]">
+                    <div
+                      className="w-full rounded-t-lg bg-gradient-to-t from-teal-600 to-cyan-400 transition-all"
+                      style={{
+                        height: `${(item.participants / 100) * 100}%`,
+                      }}
+                    />
+                  </div>
+
+                  <span className="text-xs text-[var(--muted)]">
+                    {item.week}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className={`${panel} flex flex-col justify-between p-5`}>
+            <div>
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-[var(--text)]">
+                  Learning progress
+                </h3>
+                <BarChart3 className="text-teal-500" size={21} />
+              </div>
+
+              <p className="mt-2 text-sm text-[var(--muted)]">
+                Recorded participant completions.
+              </p>
+            </div>
+
+            <div className="my-6">
+              <div className="mb-2 flex items-end justify-between">
+                <span className="text-4xl font-bold text-[var(--text)]">
+                  {completionRate}%
+                </span>
+                <span className="text-xs text-[var(--muted)]">
+                  Completion
+                </span>
+              </div>
+
+              <div className="h-3 overflow-hidden rounded-full bg-[var(--surface-2)]">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-teal-500 to-cyan-400 transition-all"
+                  style={{
+                    width: `${Math.min(completionRate, 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-[var(--border)] pt-4 text-sm">
+              <span className="text-[var(--muted)]">
+                Completed participants
+              </span>
+              <strong className="text-[var(--text)]">
+                {totalCompleted}
+              </strong>
+            </div>
+          </div>
+        </section>
+        {/* Workshop management */}
+        <section id="workshops" className={`${panel} overflow-hidden`}>
+          <div className="flex flex-col justify-between gap-4 border-b border-[var(--border)] p-5 sm:flex-row sm:items-center">
+            <div>
+              <h3 className="text-lg font-bold text-[var(--text)]">
+                Workshop management
+              </h3>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                Search, publish, and manage your workshops.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={exportCSV}
+              disabled={filtered.length === 0}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Download size={16} />
+              Export CSV
+            </button>
+          </div>
+
+          <div className="border-b border-[var(--border)] p-5">
+            <div className="relative max-w-md">
+              <Search
+                size={18}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"
+              />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search workshops, category, facilitator..."
+                className={`${inputStyle} pl-10`}
+              />
+            </div>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center px-5 py-14 text-center">
+              <div className="rounded-2xl bg-[var(--surface-2)] p-4 text-[var(--muted)]">
+                <CalendarDays size={30} />
+              </div>
+
+              <h4 className="mt-4 font-semibold text-[var(--text)]">
+                {search ? "No matching workshops" : "No workshops yet"}
+              </h4>
+
+              <p className="mt-1 max-w-sm text-sm text-[var(--muted)]">
+                {search
+                  ? "Try another search term."
+                  : "Create your first workshop using the form below."}
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead className="bg-[var(--surface-2)] text-xs uppercase tracking-wider text-[var(--muted)]">
+                  <tr>
+                    <th className="px-5 py-4 font-semibold">Workshop</th>
+                    <th className="px-5 py-4 font-semibold">Facilitator</th>
+                    <th className="px-5 py-4 font-semibold">Date</th>
+                    <th className="px-5 py-4 font-semibold">Participants</th>
+                    <th className="px-5 py-4 font-semibold">Status</th>
+                    <th className="px-5 py-4 text-right font-semibold">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filtered.map((w) => (
+                    <tr
+                      key={w.id}
+                      className="border-b border-[var(--border)] transition hover:bg-[var(--surface-2)]"
+                    >
+                      <td className="px-5 py-4">
+                        <p className="font-semibold text-[var(--text)]">
+                          {w.title}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          {w.category}
+                        </p>
+                      </td>
+
+                      <td className="px-5 py-4 text-[var(--text)]">
+                        {w.facilitator}
+                      </td>
+
+                      <td className="whitespace-nowrap px-5 py-4 text-[var(--muted)]">
+                        {w.date
+                          ? new Date(w.date).toLocaleDateString()
+                          : "Not scheduled"}
+                      </td>
+
+                      <td className="px-5 py-4 text-[var(--text)]">
+                        <div className="flex items-center gap-2">
+                          <Users
+                            size={15}
+                            className="text-[var(--muted)]"
+                          />
+                          {w.registered} / {w.capacity || "—"}
+                        </div>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                            w.status.toLowerCase() === "published"
+                              ? "bg-emerald-500/10 text-emerald-600"
+                              : "bg-amber-500/10 text-amber-600"
+                          }`}
+                        >
+                          {w.status}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleWorkshop(w)}
+                            title={
+                              w.status.toLowerCase() === "published"
+                                ? "Move to draft"
+                                : "Publish workshop"
+                            }
+                            className="rounded-lg border border-[var(--border)] p-2 text-[var(--muted)] transition hover:border-teal-500/40 hover:text-teal-500"
+                          >
+                            {w.status.toLowerCase() === "published" ? (
+                              <EyeOff size={16} />
+                            ) : (
+                              <Eye size={16} />
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => removeWorkshop(w.id)}
+                            title="Delete workshop"
+                            className="rounded-lg border border-[var(--border)] p-2 text-rose-500 transition hover:border-rose-500/40 hover:bg-rose-500/10"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] px-5 py-4 text-xs text-[var(--muted)]">
+            <span>
+              Showing {filtered.length} of {workshops.length} workshops
+            </span>
+            <span>CultureBridge Admin Workspace</span>
+          </div>
+        </section>
+
+        {/* Create workshop */}
+        <section id="create-workshop" className={`${panel} p-5 sm:p-6`}>
+          <div className="mb-6 flex items-start gap-3">
+            <div className="rounded-xl bg-teal-500/10 p-3 text-teal-500">
+              <Plus size={22} />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-bold text-[var(--text)]">
+                Create a new workshop
+              </h3>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                Add a learning session to your organization.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={createWorkshop} className="space-y-5">
+            <div className="grid gap-5 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">
+                  Workshop title *
+                </label>
+                <input
+                  required
+                  minLength={4}
+                  value={form.title}
+                  onChange={(e) =>
+                    setForm({ ...form, title: e.target.value })
+                  }
+                  placeholder="Enter workshop title"
+                  className={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">
+                  Category
+                </label>
+                <select
+                  value={form.category}
+                  onChange={(e) =>
+                    setForm({ ...form, category: e.target.value })
+                  }
+                  className={inputStyle}
+                >
+                  <option value="">Select category</option>
+                  {CATS.map((category: any, index: number) => {
+                    const value =
+                      typeof category === "string"
+                        ? category
+                        : category?.name || category?.label || "";
+
+                    return (
+                      <option key={index} value={value}>
+                        {value}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">
+                  Facilitator *
+                </label>
+                <input
+                  required
+                  value={form.facilitator}
+                  onChange={(e) =>
+                    setForm({ ...form, facilitator: e.target.value })
+                  }
+                  placeholder="Enter facilitator name"
+                  className={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">
+                  Workshop date *
+                </label>
+                <input
+                  required
+                  type="date"
+                  min={new Date().toISOString().split("T")[0]}
+                  value={form.date}
+                  onChange={(e) =>
+                    setForm({ ...form, date: e.target.value })
+                  }
+                  className={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">
+                  Participant capacity *
+                </label>
+                <input
+                  required
+                  type="number"
+                  min={5}
+                  max={200}
+                  value={form.capacity}
+                  onChange={(e) =>
+                    setForm({ ...form, capacity: e.target.value })
+                  }
+                  className={inputStyle}
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-[var(--border)] pt-5">
+              <button
+                type="button"
+                onClick={() =>
+                  setForm({
+                    title: "",
+                    category: "",
+                    facilitator: "",
+                    date: "",
+                    capacity: "30",
+                  })
+                }
+                className="rounded-xl border border-[var(--border)] px-5 py-3 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--surface-2)]"
+              >
+                Clear form
+              </button>
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-teal-600/15 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? (
+                  <>
+                    <RefreshCw size={17} className="animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <Plus size={17} />
+                    Create workshop
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        {/* Footer note */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 text-xs text-[var(--muted)]">
+          <span>CultureBridge · Admin workspace</span>
+          <span className="flex items-center gap-1">
+            <Clock3 size={13} />
+            Manage your learning programs
+          </span>
         </div>
-
-        <div className="flex items-end">
-          <button className="btn btn-pri">
-            <Plus size={18} aria-hidden />
-            Save draft
-          </button>
-        </div>
-      </form>
-
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import Nav from "@/components/Nav";
+import { ThemeProvider } from "@/components/ThemeProvider";
+import AppShell from "@/components/AppShell";
 
 export const metadata: Metadata = {
   title: "CultureBridge",
@@ -13,48 +14,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="relative min-h-screen overflow-x-hidden bg-[#0B1020] font-sans text-white antialiased">
-
-        {/* Background glow blobs */}
-        <div
-          aria-hidden
-          className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
-        >
-          <div className="absolute -left-32 -top-32 h-[28rem] w-[28rem] rounded-full bg-violet-600/30 blur-3xl" />
-
-          <div className="absolute -right-24 top-20 h-[26rem] w-[26rem] rounded-full bg-cyan-500/25 blur-3xl" />
-
-          <div className="absolute bottom-0 left-1/3 h-[24rem] w-[24rem] rounded-full bg-emerald-500/20 blur-3xl" />
-
-          <div className="absolute -bottom-24 -right-16 h-[22rem] w-[22rem] rounded-full bg-pink-500/20 blur-3xl" />
-
-          <div className="absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:28px_28px]" />
-        </div>
-
-        {/* Rainbow accent line */}
-        <div className="h-1 w-full bg-gradient-to-r from-cyan-400 via-violet-500 via-60% to-pink-500" />
-
-        {/* Sticky frosted header */}
-        <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0B1020]/70 backdrop-blur-xl">
-          <div className="mx-auto max-w-6xl px-4">
-            <Nav />
+    <html lang="en" suppressHydrationWarning>
+      <body className="min-h-screen overflow-x-hidden font-sans antialiased">
+        <ThemeProvider>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
+          >
+            <div className="absolute -left-32 -top-32 h-[28rem] w-[28rem] rounded-full bg-violet-600/20 blur-3xl" />
+            <div className="absolute -right-24 top-20 h-[26rem] w-[26rem] rounded-full bg-cyan-500/15 blur-3xl" />
+            <div className="absolute bottom-0 left-1/3 h-[24rem] w-[24rem] rounded-full bg-emerald-500/10 blur-3xl" />
           </div>
-        </header>
 
-        {/* Page content */}
-        <main className="mx-auto max-w-6xl px-4 py-10">
-          {children}
-        </main>
-
-        {/* Footer */}
-        <footer className="mt-10 border-t border-white/10 py-6 text-center text-sm text-white/50">
-          <span className="bg-gradient-to-r from-cyan-300 via-violet-300 to-pink-300 bg-clip-text font-semibold text-transparent">
-            CultureBridge
-          </span>{" "}
-          · Building bridges across cultures
-        </footer>
-
+          <AppShell>{children}</AppShell>
+        </ThemeProvider>
       </body>
     </html>
   );
