@@ -316,7 +316,7 @@ export default function Facilitator() {
                 </section>
 
                 {/* Workshop selector */}
-                <section className="dashboard-card rounded-2xl p-5 sm:p-6">
+                <section id="workshops" className="dashboard-card scroll-mt-24 rounded-2xl p-5 sm:p-6">
                   <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h3 className="text-lg font-bold text-[var(--text)]">
@@ -388,7 +388,7 @@ export default function Facilitator() {
                 </section>
 
                 {/* Attendance management */}
-                <section className="dashboard-card rounded-2xl p-5 sm:p-6">
+                <section id="attendance" className="dashboard-card scroll-mt-24 p-5 sm:p-6">
                   <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
                     <div>
                       <div className="flex items-center gap-2">
