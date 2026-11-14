@@ -35,6 +35,8 @@ app.use(express.json());
 // API routes
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/workshops", require("./routes/workshops"));
+app.use("/api/organisations", require("./routes/organisations"));
+app.use("/api/users", require("./routes/users"));
 
 // Backend health check
 app.get("/", (req, res) => {

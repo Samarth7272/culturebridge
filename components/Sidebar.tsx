@@ -14,6 +14,7 @@ import {
   ClipboardCheck,
   Award,
   Globe2,
+  Building2,
   X,
   Home,
 } from "lucide-react";
@@ -34,19 +35,39 @@ const menus = {
       icon: LayoutDashboard,
     },
     {
-      label: "Workshops",
-      href: "/admin#workshops",
-      icon: CalendarDays,
+      label: "Organisation Management",
+      href: "/admin#organisations",
+      icon: Building2,
     },
     {
-      label: "Analytics",
+      label: "User Management",
+      href: "/admin#users",
+      icon: Users,
+    },
+    {
+      label: "Learning Programs",
+      href: "/admin#programs",
+      icon: BookOpen,
+    },
+    {
+      label: "Country Learning Paths",
+      href: "/admin#countries",
+      icon: Globe2,
+    },
+    {
+      label: "Assessments",
+      href: "/admin#assessments",
+      icon: ClipboardCheck,
+    },
+    {
+      label: "Analytics & Reports",
       href: "/admin#analytics",
       icon: BarChart3,
     },
     {
-      label: "Participants",
-      href: "/admin#participants",
-      icon: Users,
+      label: "Certificates",
+      href: "/admin#certificates",
+      icon: Award,
     },
     {
       label: "Settings",
@@ -109,10 +130,8 @@ export default function Sidebar({
   onClose,
 }: SidebarProps) {
   const pathname = usePathname();
-
   const [currentHash, setCurrentHash] = useState("");
 
-  // Keep active navigation updated when the URL hash changes.
   useEffect(() => {
     const updateHash = () => {
       setCurrentHash(window.location.hash);
@@ -149,7 +168,7 @@ export default function Sidebar({
           type="button"
           aria-label="Close navigation"
           onClick={onClose}
-          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
         />
       )}
 
@@ -166,7 +185,7 @@ export default function Sidebar({
             onClick={onClose}
             className="flex items-center gap-3"
           >
-            <span className="rounded-xl bg-gradient-to-br from-teal-500 to-blue-600 p-2 text-white shadow-lg">
+            <span className="rounded-xl bg-[var(--primary)] p-2 text-white shadow-lg">
               <Globe2 size={22} />
             </span>
 
@@ -181,7 +200,6 @@ export default function Sidebar({
             </span>
           </Link>
 
-          {/* Mobile close button */}
           <button
             type="button"
             onClick={onClose}
@@ -193,7 +211,7 @@ export default function Sidebar({
         </div>
 
         {/* Navigation */}
-        <div className="flex-1 overflow-y-auto px-4 pt-7">
+        <div className="flex-1 overflow-y-auto px-4 py-7">
           <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-widest text-[var(--muted)]">
             Workspace
           </p>
@@ -219,13 +237,12 @@ export default function Sidebar({
                   aria-current={active ? "page" : undefined}
                   className={`group relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-all duration-200 ${
                     active
-                      ? "bg-gradient-to-r from-teal-500/15 to-blue-500/10 text-[var(--primary)]"
+                      ? "bg-[var(--accent-soft)] text-[var(--primary)]"
                       : "text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
                   }`}
                 >
-                  {/* Active indicator */}
                   {active && (
-                    <span className="absolute bottom-2 left-0 top-2 w-1 rounded-full bg-[var(--accent)]" />
+                    <span className="absolute bottom-2 left-0 top-2 w-1 rounded-full bg-[var(--primary)]" />
                   )}
 
                   <Icon
@@ -240,7 +257,7 @@ export default function Sidebar({
                   <span>{item.label}</span>
 
                   {active && (
-                    <span className="ml-auto h-2 w-2 rounded-full bg-[var(--accent)]" />
+                    <span className="ml-auto h-2 w-2 rounded-full bg-[var(--primary)]" />
                   )}
                 </Link>
               );
@@ -259,7 +276,6 @@ export default function Sidebar({
             Back to website
           </Link>
 
-          {/* Brand information */}
           <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
             <p className="text-xs font-semibold text-[var(--text)]">
               CultureBridge

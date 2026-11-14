@@ -18,7 +18,13 @@ exports.protect = (...roles) => {
         process.env.JWT_SECRET
       );
 
-      const userRole = String(decoded.role || "")
+      if (!decoded.id || !decoded.role) {
+        return res.status(401).json({
+          message: "Invalid login token.",
+        });
+      }
+
+      const userRole = String(decoded.role)
         .toLowerCase()
         .trim();
 
