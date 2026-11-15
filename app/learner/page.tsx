@@ -43,13 +43,128 @@ import {
   getWorkshops,
   enrollWorkshop,
   leaveWorkshop,
+  getWorkshopProgress,
+  markLessonCompleted,
+  saveQuizAnswers,
+  saveScenarioAnswer,
 } from "@/lib/api";
+import type { LearnerProgress } from "@/lib/api";
+
+
+// Convert common video links into embeddable player URLs.
+function getVideoEmbedUrl(rawUrl?: string) {
+  if (!rawUrl) return null;
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    const host = url.hostname.replace(/^www\./, "");
+    if (host === "youtu.be") {
+      const id = url.pathname.split("/").filter(Boolean)[0];
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+    if (["youtube.com", "m.youtube.com", "youtube-nocookie.com"].includes(host)) {
+      const id = url.searchParams.get("v") || url.pathname.match(/\/(?:embed|shorts)\/([^/?]+)/)?.[1];
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+    if (host === "vimeo.com") {
+      const id = url.pathname.split("/").filter(Boolean).pop();
+      return id && /^\d+$/.test(id) ? `https://player.vimeo.com/video/${id}` : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function LessonVideo({ url, title }: { url?: string; title: string }) {
+  if (!url) return null;
+
+  let safeUrl = "";
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    safeUrl = parsed.toString();
+  } catch {
+    return (
+      <p className="mt-3 text-sm text-[var(--muted)]">
+        This video link is not a valid web address. Please add a complete link beginning with https://
+      </p>
+    );
+  }
+
+  const embedUrl = getVideoEmbedUrl(safeUrl);
+  const isDirectVideo = /\.(mp4|webm|ogg)(?:$|[?#])/i.test(new URL(safeUrl).pathname + new URL(safeUrl).search);
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)] bg-black">
+      {embedUrl ? (
+        <div className="aspect-video">
+          <iframe
+            src={embedUrl}
+            title={`${title} video`}
+            className="h-full w-full"
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerPolicy="origin"
+            allowFullScreen
+          />
+        </div>
+      ) : isDirectVideo ? (
+        <video className="aspect-video w-full" controls preload="metadata" playsInline>
+          <source src={safeUrl} />
+          Your browser does not support video playback.
+        </video>
+      ) : (
+        <div className="p-4 text-center text-white">
+          <p className="mb-2 text-sm">This video host may not support embedded playback.</p>
+          <a
+            href={safeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-gray-200"
+          >
+            Open {title} video
+          </a>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/15 px-3 py-2">
+        <span className="text-xs text-white/75">Having trouble playing?</span>
+        <a
+          href={safeUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-md px-3 py-1.5 text-xs font-semibold text-white underline underline-offset-4 hover:bg-white/10"
+        >
+          Open video in a new tab
+        </a>
+      </div>
+    </div>
+  );
+}
+
+type LearnerLesson = {
+  _id?: string;
+  title: string;
+  content?: string;
+  videoUrl?: string;
+  duration?: number;
+};
+
+type LearnerModule = {
+  _id?: string;
+  title: string;
+  description?: string;
+  content?: string;
+  duration?: number;
+  lessons?: LearnerLesson[];
+};
 
 type LearnerWorkshop = Workshop & {
   id: string;
   enrolledByMe?: boolean;
   registered?: number;
   completed?: number;
+  modules?: LearnerModule[];
 };
 
 export default function Learner() {
@@ -58,23 +173,25 @@ export default function Learner() {
   const [ws, setWs] = useState<LearnerWorkshop[]>([]);
   const [enrolled, setEnrolled] = useState<string[]>([]);
   const [enrollmentLoading, setEnrollmentLoading] = useState("");
+  const [expandedProgramme, setExpandedProgramme] = useState("");
   const [loadingWorkshops, setLoadingWorkshops] = useState(true);
   const [workshopError, setWorkshopError] = useState("");
+  const [progressByWorkshop, setProgressByWorkshop] = useState<
+    Record<string, LearnerProgress>
+  >({});
+  const [savingLesson, setSavingLesson] = useState("");
+  const [progressError, setProgressError] = useState("");
 
-  const [done, setDone] = useStore<Record<string, number>>(
-    "cb.scenarios",
-    {}
-  );
-
-  const [first, setFirst] = useStore<Record<string, boolean>>(
-    "cb.first",
-    {}
-  );
-
-  const [quiz, setQuiz] = useStore<QuizStore>("cb.quiz", {});
+  // Assessments are scoped to the programme selected by the learner.
+  const [activeWorkshopId, setActiveWorkshopId] = useState("");
+  const [firstTryByWorkshop, setFirstTryByWorkshop] = useStore<
+    Record<string, Record<string, boolean>>
+  >("cb.firstByWorkshop", {});
+  const [retryingByWorkshop, setRetryingByWorkshop] = useState<
+    Record<string, Record<string, boolean>>
+  >({});
+  const [scenarioSaving, setScenarioSaving] = useState("");
   const [name, setName] = useStore<string>("cb.name", "Demo Learner");
-
-  const [pick, setPick] = useState<Record<string, number>>({});
 
   // Load published workshops and enrollment from MongoDB
   async function loadWorkshops() {
@@ -95,11 +212,43 @@ export default function Learner() {
 
       setWs(formatted);
 
-      setEnrolled(
-        formatted
-          .filter((w) => w.enrolledByMe === true)
-          .map((w) => w.id)
+      const enrolledIds = formatted
+        .filter((w) => w.enrolledByMe === true)
+        .map((w) => w.id);
+
+      setEnrolled(enrolledIds);
+      setActiveWorkshopId((current) =>
+        enrolledIds.includes(current) ? current : enrolledIds[0] || ""
       );
+
+      // Load database-backed progress for each enrolled programme.
+      // A progress-loading failure should not stop the workshop list from appearing.
+      const progressResults = await Promise.all(
+        enrolledIds.map(async (workshopId) => {
+          try {
+            const progressRecord = await getWorkshopProgress(workshopId);
+            return [workshopId, progressRecord] as const;
+          } catch (error) {
+            console.error(`Unable to load progress for programme ${workshopId}:`, error);
+            return [workshopId, null] as const;
+          }
+        })
+      );
+
+      const loadedProgress: Record<string, LearnerProgress> = {};
+      for (const [workshopId, progressRecord] of progressResults) {
+        if (progressRecord) loadedProgress[workshopId] = progressRecord;
+      }
+
+      setProgressByWorkshop((current) => ({ ...current, ...loadedProgress }));
+
+      if (progressResults.some(([, progressRecord]) => !progressRecord)) {
+        setProgressError(
+          "Some programme progress could not be loaded. Refresh the page or check the backend progress API."
+        );
+      } else {
+        setProgressError("");
+      }
     } catch (error) {
       setWorkshopError(
         error instanceof Error
@@ -163,24 +312,168 @@ export default function Learner() {
     }
   }
 
-  // Reset local learning progress
-  function reset() {
-    setDone({});
-    setFirst({});
-    setQuiz({});
-    setPick({});
+  // Calculate lesson completion using the progress saved in MongoDB.
+  function getLessonStats(workshop: LearnerWorkshop) {
+    const lessonIds = (workshop.modules || []).flatMap((module) =>
+      (module.lessons || [])
+        .map((lesson) => lesson._id)
+        .filter((id): id is string => Boolean(id))
+    );
+
+    const completedIds = progressByWorkshop[workshop.id]?.completedLessons || [];
+    const completedSet = new Set(completedIds.map(String));
+    const completed = lessonIds.filter((id) => completedSet.has(String(id))).length;
+    const total = lessonIds.length;
+
+    return {
+      completed,
+      total,
+      percentage: total ? Math.round((completed / total) * 100) : 0,
+    };
   }
 
-  // Learning calculations
+  function isLessonCompleted(workshopId: string, lessonId?: string) {
+    if (!lessonId) return false;
+    return (progressByWorkshop[workshopId]?.completedLessons || []).some(
+      (id) => String(id) === String(lessonId)
+    );
+  }
+
+  async function completeLesson(workshopId: string, lessonId?: string) {
+    if (!lessonId || savingLesson) return;
+
+    const requestKey = `${workshopId}:${lessonId}`;
+    setSavingLesson(requestKey);
+    setProgressError("");
+
+    try {
+      const savedProgress = await markLessonCompleted(workshopId, lessonId);
+      setProgressByWorkshop((current) => ({
+        ...current,
+        [workshopId]: savedProgress,
+      }));
+    } catch (error) {
+      setProgressError(
+        error instanceof Error
+          ? error.message
+          : "Unable to save lesson completion. Please try again."
+      );
+    } finally {
+      setSavingLesson("");
+    }
+  }
+
+  // Save quiz answers through the backend. The server calculates the score.
+  async function submitQuiz(phase: "pre" | "post", result: {
+    score: number;
+    total: number;
+    answers: number[];
+    at: string;
+  }) {
+    const workshopId = activeWorkshopId;
+    if (!workshopId) {
+      throw new Error("Please enrol in a programme before taking an assessment.");
+    }
+
+    try {
+      setProgressError("");
+      const response = await saveQuizAnswers(workshopId, {
+        quizType: phase,
+        answers: result.answers,
+      });
+      const updatedProgress =
+        response?.progress || (await getWorkshopProgress(workshopId));
+      setProgressByWorkshop((current) => ({
+        ...current,
+        [workshopId]: updatedProgress,
+      }));
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to save quiz answers.";
+      setProgressError(message);
+      throw error;
+    }
+  }
+
+  // Save scenario choices through the backend. Correctness is determined by the server.
+  async function submitScenarioAnswer(scenarioId: string, selectedOption: number) {
+    if (!activeWorkshopId || scenarioSaving) return;
+
+    const workshopId = activeWorkshopId;
+    const previousResult = (progressByWorkshop[workshopId]?.scenarioResults || [])
+      .find((item) => item.scenarioId === scenarioId);
+
+    try {
+      setScenarioSaving(`${workshopId}:${scenarioId}`);
+      setProgressError("");
+
+      const response = await saveScenarioAnswer(workshopId, {
+        scenarioId,
+        selectedOption,
+      });
+      const updatedProgress =
+        response?.progress || (await getWorkshopProgress(workshopId));
+
+      if (!previousResult && firstTryByWorkshop[workshopId]?.[scenarioId] === undefined) {
+        const correct = Boolean(response?.result?.correct);
+        setFirstTryByWorkshop({
+          ...firstTryByWorkshop,
+          [workshopId]: {
+            ...(firstTryByWorkshop[workshopId] || {}),
+            [scenarioId]: correct,
+          },
+        });
+      }
+
+      setProgressByWorkshop((current) => ({
+        ...current,
+        [workshopId]: updatedProgress,
+      }));
+      setRetryingByWorkshop((current) => ({
+        ...current,
+        [workshopId]: {
+          ...(current[workshopId] || {}),
+          [scenarioId]: false,
+        },
+      }));
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to save your scenario answer.";
+      setProgressError(message);
+    } finally {
+      setScenarioSaving("");
+    }
+  }
+
+  // Learning calculations are derived from the selected programme's MongoDB record.
   const open = ws.filter(
     (w) => w.status?.toLowerCase() === "published"
   );
+  const activeWorkshop = ws.find((workshop) => workshop.id === activeWorkshopId);
+  const activeProgress = activeWorkshopId
+    ? progressByWorkshop[activeWorkshopId]
+    : undefined;
 
+  const quiz: QuizStore = {};
+  for (const savedQuiz of activeProgress?.quizResults || []) {
+    const mappedResult = {
+      score: savedQuiz.score,
+      total: savedQuiz.total,
+      answers: savedQuiz.answers || [],
+      at: savedQuiz.completedAt || "",
+    };
+    if (savedQuiz.quizType === "pre") quiz.pre = mappedResult;
+    if (savedQuiz.quizType === "post") quiz.post = mappedResult;
+  }
+
+  const savedScenarios = activeProgress?.scenarioResults || [];
+  const done = Object.fromEntries(
+    savedScenarios.filter((item) => item.correct).map((item) => [item.scenarioId, 1])
+  ) as Record<string, number>;
   const T = SCENARIOS.length;
   const n = Object.keys(done).length;
   const p = progress(n, T, quiz);
-
-  const firstTry = Object.values(first).filter(Boolean).length;
+  const firstTry = Object.values(firstTryByWorkshop[activeWorkshopId] || {}).filter(Boolean).length;
   const imp = improvement(quiz);
 
   const badges = earnedBadges({
@@ -251,6 +544,125 @@ export default function Learner() {
           </div>
         </section>
 
+        {/* My Learning: programmes the learner has joined */}
+        <section id="my-learning" className="scroll-mt-24 space-y-4" aria-label="My Learning">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="rounded-xl bg-teal-500/10 p-2.5 text-teal-500"><GraduationCap size={20} /></span>
+              <h3 className="text-xl font-bold text-[var(--text)]">My Learning</h3>
+            </div>
+            <p className="mt-2 text-sm text-[var(--muted)]">Your enrolled programmes, modules, lesson notes and video classes.</p>
+          </div>
+
+          {loadingWorkshops ? (
+            <div className="dashboard-card rounded-2xl p-5 text-sm text-[var(--muted)]">Loading your learning library...</div>
+          ) : enrolled.length === 0 ? (
+            <div className="dashboard-card rounded-2xl p-6 text-sm text-[var(--muted)]">You have not enrolled in a programme yet. Explore available workshops below and enrol to start learning.</div>
+          ) : (
+            <div className="space-y-4">
+              {open.filter((w) => enrolled.includes(w.id)).map((w) => {
+                const courseProgress = getLessonStats(w);
+                return (
+                <article key={`learning-${w.id}`} className="dashboard-card rounded-2xl p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-lg font-bold text-[var(--text)]">{w.title}</h4>
+                      <p className="mt-1 text-sm text-[var(--muted)]">{(w.modules || []).length} learning module(s)</p>
+                    </div>
+                    <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-500">Enrolled</span>
+                  </div>
+
+                  <div className="mt-4 rounded-xl bg-[var(--surface-2)] p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-[var(--text)]">Programme progress</span>
+                      <span className="text-sm font-bold text-[var(--primary)]">{courseProgress.percentage}%</span>
+                    </div>
+                    <div
+                      className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--surface)]"
+                      role="progressbar"
+                      aria-valuenow={courseProgress.percentage}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`${w.title} lesson progress`}
+                    >
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-teal-500 to-blue-500 transition-all"
+                        style={{ width: `${courseProgress.percentage}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-[var(--muted)]">
+                      {courseProgress.completed} of {courseProgress.total} lessons completed
+                    </p>
+                  </div>
+
+                  {!w.modules || w.modules.length === 0 ? (
+                    <p className="mt-4 rounded-xl bg-[var(--surface-2)] p-4 text-sm text-[var(--muted)]">Your trainer has not added lessons to this programme yet.</p>
+                  ) : (
+                    <div className="mt-4 space-y-4">
+                      {w.modules.map((module, mi) => (
+                        <section key={module._id || `${w.id}-my-module-${mi}`} className="rounded-xl border border-[var(--border)] p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h5 className="font-bold text-[var(--text)]">Module {mi + 1}: {module.title}</h5>
+                            {module.duration ? <span className="text-xs text-[var(--muted)]">{module.duration} min</span> : null}
+                          </div>
+                          {module.description ? <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{module.description}</p> : null}
+                          {module.content ? <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[var(--text)]">{module.content}</p> : null}
+                          <div className="mt-4 space-y-3">
+                            {(module.lessons || []).length === 0 ? <p className="text-sm text-[var(--muted)]">No lessons have been added to this module yet.</p> : (module.lessons || []).map((lesson, li) => (
+                              <div key={lesson._id || `${w.id}-my-${mi}-${li}`} className="rounded-lg bg-[var(--surface-2)] p-4">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <h6 className="font-semibold text-[var(--text)]">Lesson {li + 1}: {lesson.title}</h6>
+                                  {lesson.duration ? <span className="text-xs text-[var(--muted)]">{lesson.duration} min</span> : null}
+                                </div>
+                                {lesson.content ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--muted)]">{lesson.content}</p> : null}
+                                <LessonVideo url={lesson.videoUrl} title={lesson.title} />
+                                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                                  {isLessonCompleted(w.id, lesson._id) ? (
+                                    <span className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-500">
+                                      <CheckCircle2 size={15} />
+                                      Completed and saved
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-[var(--muted)]">
+                                      Mark this lesson complete after you finish it.
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold"
+                                    onClick={() => completeLesson(w.id, lesson._id)}
+                                    disabled={
+                                      !lesson._id ||
+                                      isLessonCompleted(w.id, lesson._id) ||
+                                      savingLesson === `${w.id}:${lesson._id}` ||
+                                      !!savingLesson
+                                    }
+                                  >
+                                    {savingLesson === `${w.id}:${lesson._id}` ? (
+                                      <RefreshCw size={14} className="animate-spin" />
+                                    ) : (
+                                      <CheckCircle2 size={14} />
+                                    )}
+                                    {isLessonCompleted(w.id, lesson._id)
+                                      ? "Lesson completed"
+                                      : "Mark as completed"}
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  )}
+                </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+
         {/* Error notification */}
         {workshopError && (
           <div className="flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-500">
@@ -259,12 +671,19 @@ export default function Learner() {
           </div>
         )}
 
+        {progressError && (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-600">
+            <span className="font-semibold">Progress:</span>
+            <span>{progressError}</span>
+          </div>
+        )}
+
         {/* Learning statistics */}
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <div className="dashboard-card rounded-2xl p-5">
             <div className="flex items-center justify-between">
               <span className="text-sm text-[var(--muted)]">
-                Overall progress
+                Programme progress
               </span>
               <span className="rounded-xl bg-teal-500/10 p-2.5 text-teal-500">
                 <TrendingUp size={20} />
@@ -276,7 +695,7 @@ export default function Learner() {
             </p>
 
             <p className="mt-1 text-xs text-[var(--muted)]">
-              Your learning completion
+              {activeWorkshop?.title || "Select an enrolled programme"}
             </p>
           </div>
 
@@ -357,9 +776,28 @@ export default function Learner() {
               </div>
 
               <p className="mt-2 text-sm text-[var(--muted)]">
-                Track your training progress and achievements.
+                Track your training progress and achievements for each programme separately.
               </p>
             </div>
+
+            {enrolled.length > 0 && (
+              <label className="block min-w-0 sm:min-w-64">
+                <span className="mb-1 block text-xs font-semibold text-[var(--muted)]">
+                  Selected programme
+                </span>
+                <select
+                  value={activeWorkshopId}
+                  onChange={(event) => setActiveWorkshopId(event.target.value)}
+                  className="input w-full rounded-xl"
+                >
+                  {ws.filter((workshop) => enrolled.includes(workshop.id)).map((workshop) => (
+                    <option key={workshop.id} value={workshop.id}>
+                      {workshop.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <span className="text-2xl font-bold text-[var(--primary)]">
               {p}%
@@ -466,14 +904,7 @@ export default function Learner() {
             </ul>
           </div>
 
-          <button
-            type="button"
-            className="btn btn-ghost mt-5 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm"
-            onClick={reset}
-          >
-            <RotateCcw size={16} />
-            Reset my progress
-          </button>
+
         </section>
 
         {/* Available workshops */}
@@ -623,6 +1054,103 @@ export default function Learner() {
                         </>
                       )}
                     </button>
+
+                    {on && (
+                      <div className="mt-4 border-t border-[var(--border)] pt-4">
+                        <button
+                          type="button"
+                          className="btn btn-ghost inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold"
+                          aria-expanded={expandedProgramme === w.id}
+                          onClick={() =>
+                            setExpandedProgramme(
+                              expandedProgramme === w.id ? "" : w.id
+                            )
+                          }
+                        >
+                          <BookOpen size={16} />
+                          {expandedProgramme === w.id
+                            ? "Hide Modules & Lessons"
+                            : "View Modules & Lessons"}
+                        </button>
+
+                        {expandedProgramme === w.id && (
+                          <div className="mt-4 space-y-4">
+                            {!w.modules || w.modules.length === 0 ? (
+                              <div className="rounded-xl bg-[var(--surface-2)] p-4 text-sm text-[var(--muted)]">
+                                No learning modules have been added to this
+                                programme yet. Please check again later.
+                              </div>
+                            ) : (
+                              w.modules.map((module, moduleIndex) => (
+                                <div
+                                  key={module._id || `${w.id}-module-${moduleIndex}`}
+                                  className="rounded-xl border border-[var(--border)] p-4"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <h5 className="font-bold text-[var(--text)]">
+                                      Module {moduleIndex + 1}: {module.title}
+                                    </h5>
+                                    {module.duration ? (
+                                      <span className="shrink-0 text-xs text-[var(--muted)]">
+                                        {module.duration} min
+                                      </span>
+                                    ) : null}
+                                  </div>
+
+                                  {module.description ? (
+                                    <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                                      {module.description}
+                                    </p>
+                                  ) : null}
+
+                                  {module.content ? (
+                                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--text)]">
+                                      {module.content}
+                                    </p>
+                                  ) : null}
+
+                                  <div className="mt-4 space-y-3">
+                                    {(module.lessons || []).length === 0 ? (
+                                      <p className="text-sm text-[var(--muted)]">
+                                        No lessons in this module yet.
+                                      </p>
+                                    ) : (
+                                      (module.lessons || []).map(
+                                        (lesson, lessonIndex) => (
+                                          <div
+                                            key={lesson._id || `${w.id}-module-${moduleIndex}-lesson-${lessonIndex}`}
+                                            className="rounded-lg bg-[var(--surface-2)] p-3"
+                                          >
+                                            <div className="flex items-start justify-between gap-3">
+                                              <p className="font-semibold text-[var(--text)]">
+                                                Lesson {lessonIndex + 1}: {lesson.title}
+                                              </p>
+                                              {lesson.duration ? (
+                                                <span className="shrink-0 text-xs text-[var(--muted)]">
+                                                  {lesson.duration} min
+                                                </span>
+                                              ) : null}
+                                            </div>
+
+                                            {lesson.content ? (
+                                              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--muted)]">
+                                                {lesson.content}
+                                              </p>
+                                            ) : null}
+
+                                            <LessonVideo url={lesson.videoUrl} title={lesson.title} />
+                                          </div>
+                                        )
+                                      )
+                                    )}
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </article>
                 );
               })}
@@ -630,11 +1158,38 @@ export default function Learner() {
           )}
         </section>
 
-        {/* Pre-training quiz */}
+        {/* Guided learning pathway */}
+        <section aria-label="Your learning pathway" className="space-y-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--primary)]">Your development journey</p>
+            <h3 className="mt-1 text-xl font-bold text-[var(--text)]">Your learning pathway</h3>
+            <p className="mt-1 text-sm text-[var(--muted)]">Move through these stages at your own pace. Your progress and certificate status are shown here.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              { id: "my-learning", step: "01", title: "Learn", detail: "Programme videos and lessons", status: enrolled.length ? `${enrolled.length} enrolled` : "Explore programmes" },
+              { id: "pre-quiz", step: "02", title: "Starting-point check", detail: "Understand your current knowledge", status: quiz.pre ? "Completed" : "Not started" },
+              { id: "scenarios", step: "03", title: "Workplace practice", detail: "Apply skills to realistic situations", status: `${n}/${T} completed` },
+              { id: "post-quiz", step: "04", title: "Final knowledge check", detail: "Review what you have learned", status: quiz.post ? "Completed" : "Locked until ready" },
+            ].map((item) => (
+              <a key={item.id} href={`#${item.id}`} className="dashboard-card group rounded-2xl p-4 transition hover:-translate-y-0.5 hover:border-[var(--primary)]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold tracking-wider text-[var(--primary)]">STAGE {item.step}</span>
+                  <ArrowRight size={16} className="text-[var(--muted)] transition group-hover:translate-x-1" />
+                </div>
+                <h4 className="mt-3 font-bold text-[var(--text)]">{item.title}</h4>
+                <p className="mt-1 min-h-10 text-xs leading-5 text-[var(--muted)]">{item.detail}</p>
+                <p className="mt-3 text-xs font-semibold text-[var(--primary)]">{item.status}</p>
+              </a>
+            ))}
+          </div>
+        </section>
+
+        {/* Starting-point knowledge check */}
         <section
           id="pre-quiz"
           className="scroll-mt-24 space-y-4"
-          aria-label="Pre-training quiz"
+          aria-label="Starting-point knowledge check"
         >
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 text-violet-500">
@@ -643,24 +1198,31 @@ export default function Learner() {
 
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-[var(--primary)]">
-                Step 01
+                Step 02
               </p>
               <h3 className="text-xl font-bold text-[var(--text)]">
-                Pre-training assessment
+                Starting-point knowledge check
               </h3>
             </div>
           </div>
 
           <p className="text-sm text-[var(--muted)]">
-            Evaluate your existing knowledge before starting the
-            workplace learning activities.
+            A short baseline check to understand what you already know. It is a learning reference, not a judgement of your ability.
           </p>
 
-          <div className="dashboard-card rounded-2xl p-5 sm:p-6">
+          <details className="dashboard-card group rounded-2xl">
+            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 p-5 sm:p-6">
+              <span>
+                <span className="block font-semibold text-[var(--text)]">{quiz.pre ? "Review your starting-point result" : "Begin starting-point check"}</span>
+                <span className="mt-1 block text-xs text-[var(--muted)]">Open when you are ready · short knowledge check</span>
+              </span>
+              <span className="rounded-full bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-500">{quiz.pre ? "Completed" : "Not started"}</span>
+            </summary>
+            <div className="border-t border-[var(--border)] p-5 sm:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <span className="inline-flex items-center gap-2 rounded-full bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-500">
                 <Target size={14} />
-                Knowledge assessment
+                Knowledge check
               </span>
 
               {quiz.pre ? (
@@ -675,19 +1237,26 @@ export default function Learner() {
               )}
             </div>
 
-            <Quiz
-              phase="pre"
-              result={quiz.pre}
-              onDone={(r) => setQuiz({ ...quiz, pre: r })}
-            />
-          </div>
+            {activeWorkshopId ? (
+              <Quiz
+                phase="pre"
+                result={quiz.pre}
+                onDone={(r) => submitQuiz("pre", r)}
+              />
+            ) : (
+              <p className="rounded-xl bg-[var(--surface-2)] p-4 text-sm text-[var(--muted)]">
+                Enrol in a published programme to start this knowledge check.
+              </p>
+            )}
+            </div>
+          </details>
         </section>
 
-        {/* Workplace scenarios */}
+        {/* Applied workplace practice */}
         <section
           id="scenarios"
           className="scroll-mt-24 space-y-4"
-          aria-label="Workplace scenarios"
+          aria-label="Applied workplace practice"
         >
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-500">
@@ -696,20 +1265,28 @@ export default function Learner() {
 
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-[var(--primary)]">
-                Step 02
+                Step 03
               </p>
               <h3 className="text-xl font-bold text-[var(--text)]">
-                Workplace scenarios
+                Applied workplace practice
               </h3>
             </div>
           </div>
 
           <p className="text-sm text-[var(--muted)]">
-            Practice real-world workplace situations and learn
-            professional etiquette, communication and inclusion.
+            Build confidence through realistic cross-cultural situations involving meetings, feedback, communication, inclusion and collaboration. Choose a response, review the feedback and learn the key takeaway.
           </p>
 
-          <div className="mb-4 dashboard-card rounded-2xl p-4">
+          <details className="dashboard-card rounded-2xl">
+            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 p-5">
+              <span>
+                <span className="block font-semibold text-[var(--text)]">Explore the five workplace situations</span>
+                <span className="mt-1 block text-xs text-[var(--muted)]">Silent stand-ups, code review feedback, inclusive meeting times and more</span>
+              </span>
+              <span className="rounded-full bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-500">{n} of {T} completed</span>
+            </summary>
+            <div className="space-y-4 border-t border-[var(--border)] p-4 sm:p-5">
+          <div className="mb-4 rounded-2xl bg-[var(--surface-2)] p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-[var(--text)]">
@@ -737,8 +1314,11 @@ export default function Learner() {
 
           <div className="space-y-4">
             {SCENARIOS.map((s, index) => {
-              const c = pick[s.id];
-              const completed = !!done[s.id];
+              const savedScenario = savedScenarios.find((item) => item.scenarioId === s.id);
+              const isRetrying = !!retryingByWorkshop[activeWorkshopId]?.[s.id];
+              const c = isRetrying ? undefined : savedScenario?.selectedOption;
+              const completed = !!savedScenario?.correct;
+              const answerCorrect = savedScenario?.correct ?? false;
 
               return (
                 <fieldset
@@ -800,10 +1380,10 @@ export default function Learner() {
                       let optionStyle =
                         "border-[var(--border)] bg-[var(--surface)] hover:border-[var(--primary)] hover:bg-[var(--surface-2)]";
 
-                      if (selected && o.best) {
+                      if (selected && answerCorrect) {
                         optionStyle =
                           "border-emerald-500/50 bg-emerald-500/10";
-                      } else if (selected && !o.best) {
+                      } else if (selected && !answerCorrect) {
                         optionStyle =
                           "border-red-500/50 bg-red-500/10";
                       }
@@ -812,26 +1392,9 @@ export default function Learner() {
                         <button
                           key={i}
                           type="button"
-                          disabled={disabled}
+                          disabled={disabled || !activeWorkshopId || !!scenarioSaving}
                           onClick={() => {
-                            setPick({
-                              ...pick,
-                              [s.id]: i,
-                            });
-
-                            if (first[s.id] === undefined) {
-                              setFirst({
-                                ...first,
-                                [s.id]: o.best,
-                              });
-                            }
-
-                            if (o.best) {
-                              setDone({
-                                ...done,
-                                [s.id]: 1,
-                              });
-                            }
+                            void submitScenarioAnswer(s.id, i);
                           }}
                           className={`flex w-full items-start gap-3 rounded-xl border p-4 text-left text-sm transition ${
                             optionStyle
@@ -849,7 +1412,7 @@ export default function Learner() {
                             {o.t}
                           </span>
 
-                          {selected && o.best && (
+                          {selected && answerCorrect && (
                             <CheckCircle2
                               size={18}
                               className="shrink-0 text-emerald-500"
@@ -864,13 +1427,13 @@ export default function Learner() {
                     <div
                       role="status"
                       className={`mt-4 rounded-xl border p-4 ${
-                        s.opts[c].best
+                        answerCorrect
                           ? "border-emerald-500/30 bg-emerald-500/5"
                           : "border-red-500/30 bg-red-500/5"
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        {s.opts[c].best ? (
+                        {answerCorrect ? (
                           <CheckCircle2
                             size={18}
                             className="text-emerald-500"
@@ -884,12 +1447,12 @@ export default function Learner() {
 
                         <p
                           className={`text-sm font-semibold ${
-                            s.opts[c].best
+                            answerCorrect
                               ? "text-emerald-500"
                               : "text-red-500"
                           }`}
                         >
-                          {s.opts[c].best
+                          {answerCorrect
                             ? "Excellent! Correct answer."
                             : "Not quite. Try again."}
                         </p>
@@ -909,14 +1472,18 @@ export default function Learner() {
                         </p>
                       </div>
 
-                      {!s.opts[c].best && (
+                      {!answerCorrect && (
                         <button
                           type="button"
                           className="btn btn-ghost mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
                           onClick={() => {
-                            const q = { ...pick };
-                            delete q[s.id];
-                            setPick(q);
+                            setRetryingByWorkshop((current) => ({
+                              ...current,
+                              [activeWorkshopId]: {
+                                ...(current[activeWorkshopId] || {}),
+                                [s.id]: true,
+                              },
+                            }));
                           }}
                         >
                           <RotateCcw size={14} />
@@ -929,13 +1496,15 @@ export default function Learner() {
               );
             })}
           </div>
+            </div>
+          </details>
         </section>
 
-        {/* Post-training quiz */}
+        {/* Final knowledge check */}
         <section
           id="post-quiz"
           className="scroll-mt-24 space-y-4"
-          aria-label="Post-training quiz"
+          aria-label="Final knowledge check"
         >
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500">
@@ -944,21 +1513,28 @@ export default function Learner() {
 
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-[var(--primary)]">
-                Step 03
+                Step 04
               </p>
 
               <h3 className="text-xl font-bold text-[var(--text)]">
-                Post-training assessment
+                Final knowledge check
               </h3>
             </div>
           </div>
 
           <p className="text-sm text-[var(--muted)]">
-            Test what you have learned after completing the
-            workplace scenarios.
+            Review your understanding after the learning modules and workplace practice. This becomes available when the required earlier stages are complete.
           </p>
 
-          <div className="dashboard-card rounded-2xl p-5 sm:p-6">
+          <details className="dashboard-card rounded-2xl" open={!!quiz.post}>
+            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 p-5 sm:p-6">
+              <span>
+                <span className="block font-semibold text-[var(--text)]">{quiz.post ? "Review final assessment result" : "Open final knowledge check"}</span>
+                <span className="mt-1 block text-xs text-[var(--muted)]">{preDone && n === T ? "Ready when you are" : "Complete the earlier stages to unlock"}</span>
+              </span>
+              <span className="rounded-full bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-500">{quiz.post ? "Completed" : "Pending"}</span>
+            </summary>
+            <div className="border-t border-[var(--border)] p-5 sm:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-500">
                 <BadgeCheck size={14} />
@@ -999,18 +1575,20 @@ export default function Learner() {
               </div>
             ) : null}
 
-            <Quiz
-              phase="post"
-              result={quiz.post}
-              locked={!preDone || n < T}
-              onDone={(r) =>
-                setQuiz({
-                  ...quiz,
-                  post: r,
-                })
-              }
-            />
-          </div>
+            {activeWorkshopId ? (
+              <Quiz
+                phase="post"
+                result={quiz.post}
+                locked={!preDone || n < T}
+                onDone={(r) => submitQuiz("post", r)}
+              />
+            ) : (
+              <p className="rounded-xl bg-[var(--surface-2)] p-4 text-sm text-[var(--muted)]">
+                Enrol in a published programme to access the final assessment.
+              </p>
+            )}
+            </div>
+          </details>
         </section>
 
         {/* Certificate */}
@@ -1026,7 +1604,7 @@ export default function Learner() {
 
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-[var(--primary)]">
-                Final step
+                Step 05
               </p>
 
               <h3 className="text-xl font-bold text-[var(--text)]">
@@ -1086,12 +1664,11 @@ export default function Learner() {
                 <div className="mx-auto mt-4 h-px max-w-md bg-[var(--border)]" />
 
                 <p className="mt-5 text-base font-semibold text-[var(--text)]">
-                  Global Etiquette and Inclusion Training
+                  {activeWorkshop?.title || "Professional learning programme"}
                 </p>
 
                 <p className="mt-2 text-sm text-[var(--muted)]">
-                  For successfully completing all learning activities
-                  and assessments.
+                  For successfully completing the required learning activities and assessments.
                 </p>
 
                 <div className="mx-auto mt-7 grid max-w-lg gap-4 sm:grid-cols-3">
@@ -1125,7 +1702,9 @@ export default function Learner() {
 
                 <p className="mt-7 text-xs text-[var(--muted)]">
                   Issued on{" "}
-                  {new Date(quiz.post.at).toLocaleDateString()}
+                  {quiz.post.at
+                    ? new Date(quiz.post.at).toLocaleDateString()
+                    : "Date unavailable"}
                 </p>
 
                 <button

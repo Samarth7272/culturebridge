@@ -1,104 +1,124 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import {
-  UserCheck,
-  RefreshCw,
-  CalendarDays,
-  Users,
-  CheckCircle2,
-  Clock3,
-  ClipboardCheck,
-  GraduationCap,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getWorkshops, saveAttendance } from "@/lib/api";
+import {
+  BookOpen,
+  Users,
+  ClipboardCheck,
+  RefreshCw,
+  Plus,
+  Save,
+  Video,
+  ChevronDown,
+  BarChart3,
+  CheckCircle2,
+} from "lucide-react";
+
+import {
+  getWorkshops,
+  updateWorkshop,
+  saveAttendance,
+} from "@/lib/api";
+
 import DashboardLayout from "@/components/DashboardLayout";
 
-type Workshop = {
-  _id?: string;
-  id?: string;
-  title: string;
-  status: string;
-  facilitator?: string;
-  attendance?: string[];
+type Learner = {
+  _id: string;
+  name?: string;
+  email?: string;
 };
 
-const PEOPLE = [
-  "Ananya Rao",
-  "Lukas Meyer",
-  "Chidi Eze",
-  "Yuki Tanaka",
-  "Priya Nair",
-  "Mateo Silva",
-  "Hana Cho",
-  "Omar Haddad",
-];
+type Lesson = {
+  _id?: string;
+  title: string;
+  content?: string;
+  videoUrl?: string;
+  duration?: number;
+};
+
+type Module = {
+  _id?: string;
+  title: string;
+  description?: string;
+  content?: string;
+  duration?: number;
+  lessons: Lesson[];
+};
+
+type Workshop = {
+  _id: string;
+  title: string;
+  description?: string;
+  date?: string;
+  status: string;
+  capacity?: number;
+  registered?: number;
+  enrolledUsers: Learner[];
+  attendance: (Learner | string)[];
+  modules: Module[];
+  trainer?: Learner | string;
+};
+
+type Tab = "overview" | "workshops" | "learners" | "attendance";
+
+const emptyModule = (): Module => ({
+  title: "New module",
+  description: "",
+  content: "",
+  duration: 0,
+  lessons: [],
+});
+
+const emptyLesson = (): Lesson => ({
+  title: "New lesson",
+  content: "",
+  videoUrl: "",
+  duration: 0,
+});
 
 export default function Facilitator() {
   const router = useRouter();
 
+  const [tab, setTab] = useState<Tab>("overview");
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [selected, setSelected] = useState("");
-  const [attendance, setAttendance] = useState<
-    Record<string, string[]>
-  >({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [draft, setDraft] = useState<Module[]>([]);
+  const [presentIds, setPresentIds] = useState<string[]>([]);
 
-  // Load published workshops and attendance from MongoDB
-  async function loadWorkshops() {
+  // Load facilitator programmes
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    setNotice("");
+
     try {
-      setLoading(true);
-      setError("");
-
       const data = await getWorkshops();
+      const rows = Array.isArray(data) ? (data as Workshop[]) : [];
 
-      const published = (
-        Array.isArray(data) ? data : []
-      ).filter(
-        (w: Workshop) =>
-          w.status?.toLowerCase() === "published"
+      setWorkshops(rows);
+
+      setSelected((old) =>
+        rows.some((w) => w._id === old)
+          ? old
+          : rows[0]?._id || ""
       );
-
-      setWorkshops(published);
-
-      const savedAttendance: Record<string, string[]> = {};
-
-      published.forEach((w: Workshop) => {
-        const id = w._id || w.id;
-
-        if (id) {
-          savedAttendance[id] = w.attendance || [];
-        }
-      });
-
-      setAttendance(savedAttendance);
-
-      setSelected(previous => {
-        if (
-          published.some(
-            w => (w._id || w.id) === previous
-          )
-        ) {
-          return previous;
-        }
-
-        return published[0]?._id || published[0]?.id || "";
-      });
-    } catch (err) {
+    } catch (e) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Could not load workshops"
+        e instanceof Error
+          ? e.message
+          : "Could not load programmes"
       );
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  // Verify facilitator role
+  // Check facilitator authentication
   useEffect(() => {
     const stored = localStorage.getItem("user");
 
@@ -117,391 +137,848 @@ export default function Facilitator() {
         return;
       }
 
-      loadWorkshops();
+      load();
     } catch {
       router.replace("/login");
     }
+  }, [router, load]);
+
+  // Keep the URL hash and the selected dashboard tab synchronized.
+  useEffect(() => {
+    const validTabs: Tab[] = [
+      "overview",
+      "workshops",
+      "learners",
+      "attendance",
+    ];
+
+    const syncTabFromUrl = () => {
+      const hash = window.location.hash.replace(/^#/, "");
+
+      if (validTabs.includes(hash as Tab)) {
+        setTab(hash as Tab);
+      } else {
+        setTab("overview");
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${window.location.search}#overview`
+        );
+      }
+    };
+
+    syncTabFromUrl();
+    window.addEventListener("hashchange", syncTabFromUrl);
+
+    return () => {
+      window.removeEventListener("hashchange", syncTabFromUrl);
+    };
   }, []);
 
-  const currentId = selected;
-  const present = attendance[currentId] || [];
-  const absent = PEOPLE.length - present.length;
-  const percentage = PEOPLE.length
-    ? Math.round((present.length / PEOPLE.length) * 100)
+  // Use this for buttons inside the dashboard so the sidebar stays in sync.
+  function changeTab(nextTab: Tab) {
+    setTab(nextTab);
+    setError("");
+    setNotice("");
+
+    if (typeof window !== "undefined") {
+      window.location.hash = nextTab;
+    }
+  }
+
+  const current = workshops.find(
+    (w) => w._id === selected
+  );
+
+  // Load selected programme content and attendance
+  useEffect(() => {
+    setDraft(
+      current?.modules
+        ? structuredClone(current.modules)
+        : []
+    );
+
+    setPresentIds(
+      current?.attendance?.map((x) =>
+        typeof x === "string" ? x : x._id
+      ) || []
+    );
+  }, [selected, workshops]);
+
+  const learners = current?.enrolledUsers || [];
+
+  const totalPresent = current?.attendance?.length || 0;
+
+  const attendanceRate = learners.length
+    ? Math.round((totalPresent / learners.length) * 100)
     : 0;
 
-  // Save attendance directly to MongoDB
-  async function togglePerson(person: string) {
-    if (!currentId || saving) return;
+  const totalLessons = useMemo(
+    () =>
+      workshops.reduce(
+        (total, workshop) =>
+          total +
+          (workshop.modules || []).reduce(
+            (moduleTotal, mod) =>
+              moduleTotal + (mod.lessons || []).length,
+            0
+          ),
+        0
+      ),
+    [workshops]
+  );
 
-    const current = attendance[currentId] || [];
+  // Update module
+  function patchModule(
+    index: number,
+    patch: Partial<Module>
+  ) {
+    setDraft((old) =>
+      old.map((m, i) =>
+        i === index ? { ...m, ...patch } : m
+      )
+    );
+  }
 
-    const updated = current.includes(person)
-      ? current.filter(p => p !== person)
-      : [...current, person];
+  // Update lesson
+  function patchLesson(
+    moduleIndex: number,
+    lessonIndex: number,
+    patch: Partial<Lesson>
+  ) {
+    setDraft((old) =>
+      old.map((m, i) =>
+        i !== moduleIndex
+          ? m
+          : {
+              ...m,
+              lessons: m.lessons.map((l, j) =>
+                j === lessonIndex
+                  ? { ...l, ...patch }
+                  : l
+              ),
+            }
+      )
+    );
+  }
+
+  // Save learning content
+  async function saveContent() {
+    if (!current) return;
+
+    if (
+      draft.some(
+        (m) =>
+          !m.title.trim() ||
+          m.lessons.some((l) => !l.title.trim())
+      )
+    ) {
+      setError("Every module and lesson needs a title.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setNotice("");
 
     try {
-      setSaving(true);
-      setError("");
+      const updated = await updateWorkshop(
+        current._id,
+        { modules: draft }
+      );
 
-      await saveAttendance(currentId, updated);
+      setWorkshops((old) =>
+        old.map((w) =>
+          w._id === current._id
+            ? {
+                ...w,
+                ...updated,
+                modules: updated.modules || draft,
+              }
+            : w
+        )
+      );
 
-      setAttendance(previous => ({
-        ...previous,
-        [currentId]: updated,
-      }));
-    } catch (err) {
+      setNotice("Learning content saved successfully.");
+    } catch (e) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Could not save attendance"
+        e instanceof Error
+          ? e.message
+          : "Could not save learning content"
       );
     } finally {
       setSaving(false);
     }
   }
 
+  // Save attendance
+  async function saveAttendanceNow() {
+    if (!current) return;
+
+    setSaving(true);
+    setError("");
+    setNotice("");
+
+    try {
+      await saveAttendance(current._id, presentIds);
+
+      setWorkshops((old) =>
+        old.map((w) =>
+          w._id === current._id
+            ? {
+                ...w,
+                attendance: learners.filter((l) =>
+                  presentIds.includes(l._id)
+                ),
+              }
+            : w
+        )
+      );
+
+      setNotice("Attendance saved successfully.");
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Could not save attendance"
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+  const nav: {
+    id: Tab;
+    label: string;
+    icon: React.ReactNode;
+  }[] = [
+    {
+      id: "overview",
+      label: "Overview",
+      icon: <BarChart3 size={17} />,
+    },
+    {
+      id: "workshops",
+      label: "Workshops & content",
+      icon: <BookOpen size={17} />,
+    },
+    {
+      id: "learners",
+      label: "Learners",
+      icon: <Users size={17} />,
+    },
+    {
+      id: "attendance",
+      label: "Attendance",
+      icon: <ClipboardCheck size={17} />,
+    },
+  ];
+
   return (
     <DashboardLayout role="facilitator">
-      <div className="space-y-7">
+      <div className="space-y-6">
 
-        {/* Welcome section */}
+        {/* Welcome header */}
         <section className="relative overflow-hidden rounded-3xl border border-[var(--border)] bg-gradient-to-br from-teal-500/15 via-[var(--surface)] to-blue-500/10 p-6 sm:p-8">
-          <div className="pointer-events-none absolute -right-12 -top-16 h-52 w-52 rounded-full bg-teal-500/10 blur-3xl" />
-
-          <div className="relative flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
             <div>
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-teal-500/20 bg-teal-500/10 px-3 py-1.5 text-xs font-semibold text-teal-500">
-                <GraduationCap size={15} />
+              <span className="inline-flex items-center gap-2 rounded-full bg-teal-500/10 px-3 py-1.5 text-xs font-semibold text-teal-600">
                 TRAINER WORKSPACE
-              </div>
+              </span>
 
-              <h2 className="text-2xl font-bold tracking-tight text-[var(--text)] sm:text-3xl">
+              <h1 className="mt-3 text-2xl font-bold text-[var(--text)] sm:text-3xl">
                 Welcome back, Trainer
-              </h2>
+              </h1>
 
-              <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--muted)]">
-                Manage your published workshops, monitor
-                participation and keep attendance up to date.
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted)]">
+                Plan learning experiences, manage your
+                programmes and support every learner’s progress.
               </p>
             </div>
 
             <button
-              type="button"
-              onClick={loadWorkshops}
+              onClick={load}
               disabled={loading || saving}
-              className="btn btn-pri inline-flex items-center justify-center gap-2 self-start rounded-xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 sm:self-center"
+              className="btn btn-pri inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm"
             >
               <RefreshCw
-                size={17}
+                size={16}
                 className={loading ? "animate-spin" : ""}
               />
-              Refresh workshops
+              Refresh data
             </button>
           </div>
         </section>
 
+        {/* Navigation tabs */}
+        <nav className="flex flex-wrap gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-2">
+          {nav.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => changeTab(item.id)}
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                tab === item.id
+                  ? "bg-[var(--primary)] text-white"
+                  : "text-[var(--muted)] hover:bg-[var(--surface-2)]"
+              }`}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
         {/* Error message */}
         {error && (
-          <div className="flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-500">
-            <span className="font-semibold">Notice:</span>
-            <span>{error}</span>
+          <div
+            role="alert"
+            className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-500"
+          >
+            {error}
           </div>
         )}
 
-        {/* Loading state */}
+        {/* Success message */}
+        {notice && (
+          <div
+            role="status"
+            className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-600"
+          >
+            {notice}
+          </div>
+        )}
+
+        {/* Loading screen */}
         {loading ? (
-          <div className="dashboard-card flex min-h-64 flex-col items-center justify-center gap-3 rounded-2xl p-8">
-            <RefreshCw
-              size={28}
-              className="animate-spin text-[var(--primary)]"
-            />
-            <p className="font-medium text-[var(--text)]">
-              Loading your workshops
-            </p>
-            <p className="text-sm text-[var(--muted)]">
-              Connecting to your workspace...
-            </p>
+          <div className="dashboard-card flex min-h-52 items-center justify-center gap-3 rounded-2xl">
+            <RefreshCw className="animate-spin" />
+            Loading trainer workspace…
           </div>
         ) : (
           <>
-            {/* Empty state */}
+            {/* No programmes assigned */}
             {workshops.length === 0 ? (
-              <div className="dashboard-card rounded-2xl p-8 text-center sm:p-12">
-                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--surface-2)] text-[var(--primary)]">
-                  <CalendarDays size={30} />
-                </div>
+              <div className="dashboard-card rounded-2xl p-8 text-center">
+                <BookOpen className="mx-auto mb-3" />
 
-                <h3 className="text-lg font-bold text-[var(--text)]">
-                  No published workshops yet
-                </h3>
+                <h2 className="font-bold text-[var(--text)]">
+                  No programmes assigned yet
+                </h2>
 
-                <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">
-                  Published workshops assigned to trainers will
-                  appear here. Please ask an administrator to
-                  publish a workshop.
+                <p className="mt-2 text-sm text-[var(--muted)]">
+                  Ask an administrator to assign a programme
+                  to your trainer account.
                 </p>
               </div>
             ) : (
               <>
-                {/* Summary cards */}
-                <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <div className="dashboard-card rounded-2xl p-5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-[var(--muted)]">
-                        Published workshops
-                      </span>
-                      <span className="rounded-xl bg-blue-500/10 p-2.5 text-blue-500">
-                        <CalendarDays size={19} />
-                      </span>
-                    </div>
-                    <p className="mt-4 text-3xl font-bold text-[var(--text)]">
-                      {workshops.length}
-                    </p>
-                    <p className="mt-1 text-xs text-[var(--muted)]">
-                      Available in your workspace
-                    </p>
-                  </div>
-
-                  <div className="dashboard-card rounded-2xl p-5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-[var(--muted)]">
-                        Participants
-                      </span>
-                      <span className="rounded-xl bg-violet-500/10 p-2.5 text-violet-500">
-                        <Users size={19} />
-                      </span>
-                    </div>
-                    <p className="mt-4 text-3xl font-bold text-[var(--text)]">
-                      {PEOPLE.length}
-                    </p>
-                    <p className="mt-1 text-xs text-[var(--muted)]">
-                      Participants in the attendance list
-                    </p>
-                  </div>
-
-                  <div className="dashboard-card rounded-2xl p-5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-[var(--muted)]">
-                        Present
-                      </span>
-                      <span className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-500">
-                        <UserCheck size={19} />
-                      </span>
-                    </div>
-                    <p className="mt-4 text-3xl font-bold text-[var(--text)]">
-                      {present.length}
-                    </p>
-                    <p className="mt-1 text-xs text-[var(--muted)]">
-                      For the selected workshop
-                    </p>
-                  </div>
-
-                  <div className="dashboard-card rounded-2xl p-5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-[var(--muted)]">
-                        Attendance rate
-                      </span>
-                      <span className="rounded-xl bg-amber-500/10 p-2.5 text-amber-500">
-                        <ClipboardCheck size={19} />
-                      </span>
-                    </div>
-                    <p className="mt-4 text-3xl font-bold text-[var(--text)]">
-                      {percentage}%
-                    </p>
-                    <p className="mt-1 text-xs text-[var(--muted)]">
-                      For the selected workshop
-                    </p>
-                  </div>
-                </section>
-
-                {/* Workshop selector */}
-                <section id="workshops" className="dashboard-card scroll-mt-24 rounded-2xl p-5 sm:p-6">
-                  <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h3 className="text-lg font-bold text-[var(--text)]">
-                        Workshop overview
-                      </h3>
-                      <p className="mt-1 text-sm text-[var(--muted)]">
-                        Select a workshop to manage its attendance.
-                      </p>
-                    </div>
-
-                    <span className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-500">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                      Published
-                    </span>
-                  </div>
-
+                {/* Programme selector */}
+                <section className="dashboard-card rounded-2xl p-5">
                   <label
-                    htmlFor="workshop"
-                    className="mb-2 block text-sm font-medium text-[var(--text)]"
+                    htmlFor="programme-select"
+                    className="mb-2 block text-sm font-semibold text-[var(--text)]"
                   >
-                    Select workshop
+                    Select programme
                   </label>
 
                   <select
-                    id="workshop"
-                    className="input w-full rounded-xl md:max-w-xl"
-                    value={currentId}
-                    onChange={e => setSelected(e.target.value)}
+                    id="programme-select"
+                    value={selected}
+                    onChange={(e) =>
+                      setSelected(e.target.value)
+                    }
+                    className="input w-full rounded-xl"
                   >
-                    {workshops.map(w => {
-                      const id = w._id || w.id || "";
-
-                      return (
-                        <option key={id} value={id}>
-                          {w.title}
-                        </option>
-                      );
-                    })}
+                    {workshops.map((w) => (
+                      <option key={w._id} value={w._id}>
+                        {w.title} · {w.status}
+                      </option>
+                    ))}
                   </select>
-
-                  <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-xl bg-[var(--surface-2)] p-4">
-                      <p className="text-xs text-[var(--muted)]">
-                        Total participants
-                      </p>
-                      <p className="mt-2 text-xl font-bold text-[var(--text)]">
-                        {PEOPLE.length}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-emerald-500/10 p-4">
-                      <p className="text-xs text-emerald-600">
-                        Present
-                      </p>
-                      <p className="mt-2 text-xl font-bold text-emerald-600">
-                        {present.length}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-amber-500/10 p-4">
-                      <p className="text-xs text-amber-600">
-                        Not marked present
-                      </p>
-                      <p className="mt-2 text-xl font-bold text-amber-600">
-                        {absent}
-                      </p>
-                    </div>
-                  </div>
                 </section>
 
-                {/* Attendance management */}
-                <section id="attendance" className="dashboard-card scroll-mt-24 p-5 sm:p-6">
-                  <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-xl bg-teal-500/10 p-2.5 text-teal-500">
-                          <UserCheck size={20} />
-                        </span>
-                        <h3 className="text-lg font-bold text-[var(--text)]">
-                          Attendance management
-                        </h3>
+                {/* OVERVIEW TAB */}
+                {current && tab === "overview" && (
+                  <div className="space-y-6">
+
+                    {/* Metric cards */}
+                    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        {
+                          label: "Assigned programmes",
+                          value: workshops.length,
+                          icon: <BookOpen />,
+                        },
+                        {
+                          label: "Enrolled learners",
+                          value: workshops.reduce(
+                            (n, w) =>
+                              n + (w.enrolledUsers?.length || 0),
+                            0
+                          ),
+                          icon: <Users />,
+                        },
+                        {
+                          label: "Learning lessons",
+                          value: totalLessons,
+                          icon: <Video />,
+                        },
+                        {
+                          label: "Published programmes",
+                          value: workshops.filter(
+                            (w) => w.status === "Published"
+                          ).length,
+                          icon: <CheckCircle2 />,
+                        },
+                      ].map((c) => (
+                        <div
+                          key={c.label}
+                          className="dashboard-card rounded-2xl p-5"
+                        >
+                          <div className="flex items-center justify-between text-[var(--muted)]">
+                            <span className="text-sm">
+                              {c.label}
+                            </span>
+
+                            <span className="rounded-xl bg-teal-500/10 p-2 text-teal-600">
+                              {c.icon}
+                            </span>
+                          </div>
+
+                          <p className="mt-4 text-3xl font-bold text-[var(--text)]">
+                            {c.value}
+                          </p>
+                        </div>
+                      ))}
+                    </section>
+                    {/* Programme overview */}
+                    <section className="grid gap-4 lg:grid-cols-2">
+                      <div className="dashboard-card rounded-2xl p-6">
+                        <p className="text-sm text-[var(--muted)]">
+                          Selected programme
+                        </p>
+
+                        <h2 className="mt-2 text-xl font-bold text-[var(--text)]">
+                          {current.title}
+                        </h2>
+
+                        <p className="mt-2 text-sm text-[var(--muted)]">
+                          {current.description ||
+                            "No programme description added."}
+                        </p>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600">
+                            {current.status}
+                          </span>
+
+                          <span className="rounded-full bg-[var(--surface-2)] px-3 py-1 text-xs text-[var(--muted)]">
+                            {current.date || "Date not set"}
+                          </span>
+                        </div>
                       </div>
-                      <p className="mt-2 text-sm text-[var(--muted)]">
-                        Mark participants present. Changes are
-                        saved to the database.
-                      </p>
+
+                      <div className="dashboard-card rounded-2xl p-6">
+                        <p className="text-sm text-[var(--muted)]">
+                          Attendance snapshot
+                        </p>
+
+                        <p className="mt-2 text-4xl font-bold text-[var(--text)]">
+                          {attendanceRate}%
+                        </p>
+
+                        <p className="mt-1 text-sm text-[var(--muted)]">
+                          {totalPresent} present out of{" "}
+                          {learners.length} enrolled learners
+                        </p>
+
+                        <div className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--surface-2)]">
+                          <div
+                            className="h-full rounded-full bg-teal-500"
+                            style={{
+                              width: `${attendanceRate}%`,
+                            }}
+                          />
+                        </div>
+
+                        <button
+                          onClick={() => changeTab("attendance")}
+                          className="btn btn-ghost mt-4 rounded-xl px-4 py-2 text-sm"
+                        >
+                          Manage attendance
+                        </button>
+                      </div>
+                    </section>
+                  </div>
+                )}
+
+                {/* WORKSHOPS & CONTENT TAB */}
+                {current && tab === "workshops" && (
+                  <section className="dashboard-card space-y-5 rounded-2xl p-5 sm:p-6">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-xl font-bold text-[var(--text)]">
+                          Learning content studio
+                        </h2>
+
+                        <p className="mt-1 text-sm text-[var(--muted)]">
+                          Organise modules, lessons, learning notes
+                          and video links.
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() =>
+                          setDraft((old) => [
+                            ...old,
+                            emptyModule(),
+                          ])
+                        }
+                        className="btn btn-pri inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm"
+                      >
+                        <Plus size={16} />
+                        Add module
+                      </button>
                     </div>
 
-                    <div className="rounded-xl border border-[var(--border)] px-4 py-3">
-                      <p className="text-xs text-[var(--muted)]">
-                        Attendance progress
-                      </p>
-                      <p className="mt-1 text-xl font-bold text-[var(--text)]">
-                        {percentage}%
-                      </p>
+                    {draft.length === 0 && (
+                      <div className="rounded-xl bg-[var(--surface-2)] p-6 text-center text-sm text-[var(--muted)]">
+                        No modules yet. Add your first module
+                        to build this programme.
+                      </div>
+                    )}
+
+                    {draft.map((mod, mi) => (
+                      <details
+                        key={mod._id || mi}
+                        open
+                        className="rounded-xl border border-[var(--border)]"
+                      >
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+                          <span className="font-semibold text-[var(--text)]">
+                            Module {mi + 1}:{" "}
+                            {mod.title || "Untitled module"}
+                          </span>
+
+                          <ChevronDown size={17} />
+                        </summary>
+
+                        <div className="space-y-3 border-t border-[var(--border)] p-4">
+                          <input
+                            className="input w-full rounded-lg"
+                            aria-label="Module title"
+                            value={mod.title}
+                            onChange={(e) =>
+                              patchModule(mi, {
+                                title: e.target.value,
+                              })
+                            }
+                            placeholder="Module title"
+                          />
+
+                          <textarea
+                            className="input min-h-20 w-full rounded-lg"
+                            aria-label="Module description"
+                            value={mod.description || ""}
+                            onChange={(e) =>
+                              patchModule(mi, {
+                                description: e.target.value,
+                              })
+                            }
+                            placeholder="Module description"
+                          />
+
+                          <textarea
+                            className="input min-h-24 w-full rounded-lg"
+                            aria-label="Module learning content"
+                            value={mod.content || ""}
+                            onChange={(e) =>
+                              patchModule(mi, {
+                                content: e.target.value,
+                              })
+                            }
+                            placeholder="Learning notes or instructions"
+                          />
+
+                          <div className="space-y-3">
+                            {(mod.lessons || []).map(
+                              (lesson, li) => (
+                                <div
+                                  key={lesson._id || li}
+                                  className="rounded-xl bg-[var(--surface-2)] p-4"
+                                >
+                                  <p className="mb-3 text-sm font-semibold text-[var(--text)]">
+                                    Lesson {li + 1}
+                                  </p>
+
+                                  <input
+                                    className="input mb-2 w-full rounded-lg"
+                                    value={lesson.title}
+                                    onChange={(e) =>
+                                      patchLesson(mi, li, {
+                                        title: e.target.value,
+                                      })
+                                    }
+                                    placeholder="Lesson title"
+                                  />
+
+                                  <textarea
+                                    className="input mb-2 min-h-20 w-full rounded-lg"
+                                    value={lesson.content || ""}
+                                    onChange={(e) =>
+                                      patchLesson(mi, li, {
+                                        content: e.target.value,
+                                      })
+                                    }
+                                    placeholder="Lesson description and notes"
+                                  />
+
+                                  <div className="grid gap-2 sm:grid-cols-[1fr_120px]">
+                                    <input
+                                      className="input w-full rounded-lg"
+                                      type="url"
+                                      value={lesson.videoUrl || ""}
+                                      onChange={(e) =>
+                                        patchLesson(mi, li, {
+                                          videoUrl: e.target.value,
+                                        })
+                                      }
+                                      placeholder="Video URL (YouTube, Vimeo or MP4)"
+                                    />
+
+                                    <input
+                                      className="input w-full rounded-lg"
+                                      type="number"
+                                      min="0"
+                                      value={lesson.duration || 0}
+                                      onChange={(e) =>
+                                        patchLesson(mi, li, {
+                                          duration: Number(
+                                            e.target.value
+                                          ),
+                                        })
+                                      }
+                                      placeholder="Minutes"
+                                    />
+                                  </div>
+
+                                  {lesson.videoUrl && (
+                                    <a
+                                      href={lesson.videoUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-[var(--primary)]"
+                                    >
+                                      <Video size={14} />
+                                      Test video link
+                                    </a>
+                                  )}
+
+                                  <button
+                                    onClick={() =>
+                                      patchModule(mi, {
+                                        lessons: mod.lessons.filter(
+                                          (_, i) => i !== li
+                                        ),
+                                      })
+                                    }
+                                    className="mt-3 text-xs font-semibold text-red-500"
+                                  >
+                                    Remove lesson
+                                  </button>
+                                </div>
+                              )
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap justify-between gap-2">
+                            <button
+                              onClick={() =>
+                                patchModule(mi, {
+                                  lessons: [
+                                    ...mod.lessons,
+                                    emptyLesson(),
+                                  ],
+                                })
+                              }
+                              className="btn btn-ghost inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"
+                            >
+                              <Plus size={15} />
+                              Add lesson
+                            </button>
+
+                            <button
+                              onClick={() =>
+                                setDraft((old) =>
+                                  old.filter((_, i) => i !== mi)
+                                )
+                              }
+                              className="rounded-lg px-3 py-2 text-sm font-semibold text-red-500"
+                            >
+                              Remove module
+                            </button>
+                          </div>
+                        </div>
+                      </details>
+                    ))}
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={saveContent}
+                        disabled={saving}
+                        className="btn btn-pri inline-flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold disabled:opacity-50"
+                      >
+                        <Save size={16} />
+                        {saving
+                          ? "Saving…"
+                          : "Save learning content"}
+                      </button>
                     </div>
-                  </div>
+                  </section>
+                )}
+                {/* LEARNERS TAB */}
+                {current && tab === "learners" && (
+                  <section className="dashboard-card rounded-2xl p-5">
+                    <h2 className="text-xl font-bold text-[var(--text)]">
+                      Enrolled learners
+                    </h2>
 
-                  <div className="mt-5 h-2.5 overflow-hidden rounded-full bg-[var(--surface-2)]">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-teal-500 to-blue-500 transition-all duration-500"
-                      style={{ width: `${percentage}%` }}
-                    />
-                  </div>
-
-                  <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-[var(--text)]">
-                      Participant list
+                    <p className="mt-1 text-sm text-[var(--muted)]">
+                      Learners enrolled in {current.title}.
                     </p>
 
-                    {saving ? (
-                      <span className="inline-flex items-center gap-2 text-xs text-[var(--muted)]">
-                        <RefreshCw size={14} className="animate-spin" />
-                        Saving changes...
-                      </span>
+                    {learners.length === 0 ? (
+                      <p className="mt-5 rounded-xl bg-[var(--surface-2)] p-5 text-sm text-[var(--muted)]">
+                        No learners have enrolled yet.
+                      </p>
                     ) : (
-                      <span className="inline-flex items-center gap-2 text-xs text-emerald-500">
-                        <CheckCircle2 size={15} />
-                        Attendance synced
-                      </span>
-                    )}
-                  </div>
-
-                  <ul className="mt-4 grid gap-3 sm:grid-cols-2">
-                    {PEOPLE.map((person, index) => {
-                      const isPresent = present.includes(person);
-
-                      return (
-                        <li key={person}>
-                          <label
-                            className={`flex cursor-pointer items-center gap-3 rounded-xl border p-4 transition ${
-                              isPresent
-                                ? "border-emerald-500/30 bg-emerald-500/5"
-                                : "border-[var(--border)] bg-[var(--surface-2)] hover:border-[var(--primary)]"
-                            } ${
-                              saving
-                                ? "cursor-not-allowed opacity-70"
-                                : ""
-                            }`}
+                      <div className="mt-4 divide-y divide-[var(--border)]">
+                        {learners.map((l, i) => (
+                          <div
+                            key={l._id}
+                            className="flex items-center gap-3 py-3"
                           >
-                            <input
-                              type="checkbox"
-                              checked={isPresent}
-                              disabled={saving || !currentId}
-                              onChange={() => togglePerson(person)}
-                              className="h-4 w-4 accent-emerald-500"
-                            />
-
-                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500/20 to-blue-500/20 text-sm font-bold text-[var(--primary)]">
-                              {person
-                                .split(" ")
-                                .map(part => part[0])
-                                .join("")}
+                            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-teal-500/10 text-sm font-bold text-teal-600">
+                              {(l.name || l.email || "L")
+                                .slice(0, 1)
+                                .toUpperCase()}
                             </span>
 
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-semibold text-[var(--text)]">
-                                {person}
-                              </span>
-                              <span className="mt-1 block text-xs text-[var(--muted)]">
-                                Participant {String(index + 1).padStart(2, "0")}
-                              </span>
-                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold text-[var(--text)]">
+                                {l.name || "Learner"}
+                              </p>
 
-                            <span
-                              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                                isPresent
-                                  ? "bg-emerald-500/10 text-emerald-500"
-                                  : "bg-[var(--surface)] text-[var(--muted)]"
-                              }`}
+                              <p className="truncate text-xs text-[var(--muted)]">
+                                {l.email || "Email unavailable"}
+                              </p>
+                            </div>
+
+                            <span className="text-xs text-[var(--muted)]">
+                              Learner {i + 1}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                )}
+
+                {/* ATTENDANCE TAB */}
+                {current && tab === "attendance" && (
+                  <section className="dashboard-card rounded-2xl p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-xl font-bold text-[var(--text)]">
+                          Attendance register
+                        </h2>
+
+                        <p className="mt-1 text-sm text-[var(--muted)]">
+                          Mark enrolled learners present.
+                          Unchecked learners are recorded as absent.
+                        </p>
+                      </div>
+
+                      <span className="rounded-full bg-teal-500/10 px-3 py-1.5 text-sm font-bold text-teal-600">
+                        {learners.length
+                          ? Math.round(
+                              (presentIds.length / learners.length) *
+                                100
+                            )
+                          : 0}
+                        % present
+                      </span>
+                    </div>
+
+                    {learners.length === 0 ? (
+                      <p className="mt-5 rounded-xl bg-[var(--surface-2)] p-5 text-sm text-[var(--muted)]">
+                        No enrolled learners to mark.
+                      </p>
+                    ) : (
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                        {learners.map((l) => {
+                          const isPresent = presentIds.includes(
+                            l._id
+                          );
+
+                          return (
+                            <label
+                              key={l._id}
+                              className="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] p-4"
                             >
-                              {isPresent ? "Present" : "Absent"}
-                            </span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                              <input
+                                type="checkbox"
+                                checked={isPresent}
+                                onChange={(e) =>
+                                  setPresentIds((old) =>
+                                    e.target.checked
+                                      ? [...old, l._id]
+                                      : old.filter(
+                                          (id) => id !== l._id
+                                        )
+                                  )
+                                }
+                                className="h-4 w-4 accent-emerald-500"
+                              />
 
-                  <div className="mt-5 flex items-center gap-2 rounded-xl bg-[var(--surface-2)] p-4 text-xs leading-5 text-[var(--muted)]">
-                    <Clock3 size={16} className="shrink-0" />
-                    Attendance updates are saved when you change
-                    a participant's status.
-                  </div>
-                </section>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-semibold text-[var(--text)]">
+                                  {l.name || "Learner"}
+                                </span>
+
+                                <span className="block truncate text-xs text-[var(--muted)]">
+                                  {l.email || ""}
+                                </span>
+                              </span>
+
+                              <span
+                                className={`text-xs font-semibold ${
+                                  isPresent
+                                    ? "text-emerald-600"
+                                    : "text-[var(--muted)]"
+                                }`}
+                              >
+                                {isPresent ? "Present" : "Absent"}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="mt-5 flex justify-end">
+                      <button
+                        onClick={saveAttendanceNow}
+                        disabled={saving || !current}
+                        className="btn btn-pri inline-flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold disabled:opacity-50"
+                      >
+                        <Save size={16} />
+                        {saving
+                          ? "Saving…"
+                          : "Save attendance"}
+                      </button>
+                    </div>
+                  </section>
+                )}
               </>
             )}
           </>

@@ -19,7 +19,16 @@ router.get("/", async (req, res) => {
       .select("-password")
       .populate("organisation", "name industry")
       .sort({ createdAt: -1 });
-
+console.log(
+  "FACILITATOR ACCOUNTS:",
+  users.filter(user => user.role === "facilitator").map(user => ({
+    id: String(user._id),
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    status: user.status
+  }))
+);
     res.json(users);
   } catch (error) {
     console.error("Get users error:", error);

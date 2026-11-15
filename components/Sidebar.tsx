@@ -29,92 +29,29 @@ type SidebarProps = {
 
 const menus = {
   admin: [
-    {
-      label: "Overview",
-      href: "/admin",
-      icon: LayoutDashboard,
-    },
-    {
-      label: "Organisation Management",
-      href: "/admin#organisations",
-      icon: Building2,
-    },
-    {
-      label: "User Management",
-      href: "/admin#users",
-      icon: Users,
-    },
-    {
-      label: "Learning Programs",
-      href: "/admin#programs",
-      icon: BookOpen,
-    },
-    {
-      label: "Country Learning Paths",
-      href: "/admin#countries",
-      icon: Globe2,
-    },
-    {
-      label: "Assessments",
-      href: "/admin#assessments",
-      icon: ClipboardCheck,
-    },
-    {
-      label: "Analytics & Reports",
-      href: "/admin#analytics",
-      icon: BarChart3,
-    },
-    {
-      label: "Certificates",
-      href: "/admin#certificates",
-      icon: Award,
-    },
-    {
-      label: "Settings",
-      href: "/admin#settings",
-      icon: Settings,
-    },
+    { label: "Overview", href: "/admin", icon: LayoutDashboard },
+    { label: "Organisation Management", href: "/admin#organisations", icon: Building2 },
+    { label: "User Management", href: "/admin#users", icon: Users },
+    { label: "Learning Programs", href: "/admin#programs", icon: BookOpen },
+    { label: "Country Learning Paths", href: "/admin#countries", icon: Globe2 },
+    { label: "Assessments", href: "/admin#assessments", icon: ClipboardCheck },
+    { label: "Analytics & Reports", href: "/admin#analytics", icon: BarChart3 },
+    { label: "Certificates", href: "/admin#certificates", icon: Award },
+    { label: "Settings", href: "/admin#settings", icon: Settings },
   ],
 
   facilitator: [
-    {
-      label: "Overview",
-      href: "/facilitator",
-      icon: LayoutDashboard,
-    },
-    {
-      label: "Workshops",
-      href: "/facilitator#workshops",
-      icon: CalendarDays,
-    },
-    {
-      label: "Attendance",
-      href: "/facilitator#attendance",
-      icon: ClipboardCheck,
-    },
+    { label: "Overview", href: "/facilitator#overview", icon: LayoutDashboard },
+    { label: "Workshops & Content", href: "/facilitator#workshops", icon: CalendarDays },
+    { label: "Learners", href: "/facilitator#learners", icon: Users },
+    { label: "Attendance", href: "/facilitator#attendance", icon: ClipboardCheck },
   ],
 
   learner: [
-    {
-      label: "My Learning",
-      href: "/learner",
-      icon: LayoutDashboard,
-    },
-    {
-      label: "Workshops",
-      href: "/learner#workshops",
-      icon: CalendarDays,
-    },
-    {
-      label: "Assessments",
-      href: "/learner#pre-quiz",
-      icon: BookOpen,
-    },
-    {
-      label: "Achievements",
-      href: "/learner#achievements",
-      icon: Award,
-    },
+    { label: "My Learning", href: "/learner", icon: LayoutDashboard },
+    { label: "Workshops", href: "/learner#workshops", icon: CalendarDays },
+    { label: "Assessments", href: "/learner#pre-quiz", icon: BookOpen },
+    { label: "Achievements", href: "/learner#achievements", icon: Award },
   ],
 };
 
@@ -124,11 +61,7 @@ const roleLabels = {
   learner: "Employee",
 };
 
-export default function Sidebar({
-  role,
-  open,
-  onClose,
-}: SidebarProps) {
+export default function Sidebar({ role, open, onClose }: SidebarProps) {
   const pathname = usePathname();
   const [currentHash, setCurrentHash] = useState("");
 
@@ -138,7 +71,6 @@ export default function Sidebar({
     };
 
     updateHash();
-
     window.addEventListener("hashchange", updateHash);
 
     return () => {
@@ -149,9 +81,7 @@ export default function Sidebar({
   const isActive = (href: string) => {
     const [itemPath, itemHash] = href.split("#");
 
-    if (pathname !== itemPath) {
-      return false;
-    }
+    if (pathname !== itemPath) return false;
 
     if (itemHash) {
       return currentHash === `#${itemHash}`;
@@ -162,7 +92,6 @@ export default function Sidebar({
 
   return (
     <>
-      {/* Mobile backdrop */}
       {open && (
         <button
           type="button"
@@ -172,13 +101,11 @@ export default function Sidebar({
         />
       )}
 
-      {/* Sidebar */}
       <aside
         className={`fixed bottom-0 left-0 top-0 z-50 flex w-64 flex-col border-r border-[var(--border)] bg-[var(--surface)] shadow-xl transition-transform duration-300 lg:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        {/* Brand */}
         <div className="flex h-20 shrink-0 items-center justify-between border-b border-[var(--border)] px-5">
           <Link
             href="/"
@@ -193,7 +120,6 @@ export default function Sidebar({
               <span className="block text-lg font-bold text-[var(--text)]">
                 CultureBridge
               </span>
-
               <span className="text-xs text-[var(--muted)]">
                 {roleLabels[role]}
               </span>
@@ -210,7 +136,6 @@ export default function Sidebar({
           </button>
         </div>
 
-        {/* Navigation */}
         <div className="flex-1 overflow-y-auto px-4 py-7">
           <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-widest text-[var(--muted)]">
             Workspace
@@ -225,15 +150,7 @@ export default function Sidebar({
                 <Link
                   key={item.href}
                   href={item.href}
-                  onClick={() => {
-                    setCurrentHash(
-                      item.href.includes("#")
-                        ? `#${item.href.split("#")[1]}`
-                        : ""
-                    );
-
-                    onClose();
-                  }}
+                  onClick={onClose}
                   aria-current={active ? "page" : undefined}
                   className={`group relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-all duration-200 ${
                     active
@@ -265,7 +182,6 @@ export default function Sidebar({
           </nav>
         </div>
 
-        {/* Bottom section */}
         <div className="shrink-0 border-t border-[var(--border)] p-4">
           <Link
             href="/"
@@ -280,7 +196,6 @@ export default function Sidebar({
             <p className="text-xs font-semibold text-[var(--text)]">
               CultureBridge
             </p>
-
             <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
               Building bridges across cultures.
             </p>

@@ -25,6 +25,7 @@ import {
   Mail,
   Phone,
   Globe2,
+  Settings,
 } from "lucide-react";
 
 import {
@@ -52,12 +53,66 @@ type WorkshopRow = {
   title: string;
   category: string;
   facilitator: string;
+  trainerId: string;
   date: string;
   capacity: number;
   registered: number;
   completed: number;
   status: string;
 };
+
+type AdminReportLearner = {
+  learnerId: string;
+  learnerName: string;
+  learnerEmail: string;
+  programmeId: string;
+  programmeName: string;
+  progressPercentage: number;
+  preQuiz: { score: number; total: number; percentage: number; completedAt?: string } | null;
+  postQuiz: { score: number; total: number; percentage: number; completedAt?: string } | null;
+  quizAttempts: number;
+  scenariosCompleted: number;
+  scenariosTotal: number;
+  scenariosCorrect: number;
+  certificateEligible: boolean;
+};
+
+type AdminReportProgramme = {
+  programmeId: string;
+  programmeName: string;
+  status: string;
+  enrolledCount: number;
+  learnersStarted: number;
+  preQuizAverage: number | null;
+  postQuizAverage: number | null;
+  scenarioAttempts: number;
+  scenarioAccuracy: number | null;
+  scenarioCompletionRate: number | null;
+  certificateEligibleCount: number;
+};
+
+type AdminReports = {
+  summary: {
+    totalProgrammes: number;
+    totalEnrolments: number;
+    learnersWithProgress: number;
+    totalQuizAttempts: number;
+    preQuizAverage: number | null;
+    postQuizAverage: number | null;
+    totalScenarioResponses: number;
+    scenarioAccuracy: number | null;
+    certificateEligibleCount: number;
+  };
+  programmes: AdminReportProgramme[];
+  learners: AdminReportLearner[];
+  generatedAt: string;
+};
+
+function reportPercent(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${value}%`
+    : "No data";
+}
 
 const panel =
   "rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm";
@@ -79,12 +134,33 @@ function getText(value: any, fallback = ""): string {
   return fallback;
 }
 
+// Handles both a raw MongoDB ObjectId string and a populated MongoDB reference.
+function getMongoId(value: any): string {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+
+  if (typeof value === "object") {
+    const id = value._id ?? value.id ?? value.$oid;
+    return id === value ? "" : getMongoId(id);
+  }
+
+  return "";
+}
+
 function normalizeWorkshop(item: any): WorkshopRow {
+  const trainerId = getMongoId(item?.trainer);
+  const populatedTrainerName = getText(item?.trainer?.name, "");
+
   return {
-    id: String(item?._id || item?.id || ""),
+    id: getMongoId(item?._id || item?.id),
     title: getText(item?.title, "Untitled workshop"),
     category: getText(item?.cat || item?.category, "General"),
-    facilitator: getText(item?.facilitator, "Not assigned"),
+    // The populated trainer reference is the source of truth when available.
+    facilitator:
+      populatedTrainerName ||
+      getText(item?.facilitator || item?.trainer, "Not assigned"),
+    trainerId,
     date: getText(item?.date, ""),
     capacity: Number(item?.capacity) || 0,
     registered: Number(item?.registered) || 0,
@@ -93,13 +169,7 @@ function normalizeWorkshop(item: any): WorkshopRow {
   };
 }
 
-const trendData = [
-  { week: "W1", participants: 12 },
-  { week: "W2", participants: 28 },
-  { week: "W3", participants: 41 },
-  { week: "W4", participants: 62 },
-  { week: "W5", participants: 86 },
-];
+
 
 export default function Admin() {
   useEffect(() => {
@@ -146,9 +216,16 @@ export default function Admin() {
   const [authorized, setAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editingTrainerWorkshopId, setEditingTrainerWorkshopId] = useState<string | null>(null);
+  const [editingTrainerId, setEditingTrainerId] = useState("");
+  const [trainerSaving, setTrainerSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [adminReports, setAdminReports] = useState<AdminReports | null>(null);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportsError, setReportsError] = useState("");
+  const [adminAccount, setAdminAccount] = useState({ name: "Admin", email: "" });
 
   const [form, setForm] = useState({
     title: "",
@@ -183,6 +260,10 @@ export default function Admin() {
         return;
       }
 
+      setAdminAccount({
+        name: String(user.name || user.fullName || "Admin"),
+        email: String(user.email || ""),
+      });
       setAuthorized(true);
     } catch {
       localStorage.removeItem("user");
@@ -191,7 +272,7 @@ export default function Admin() {
     }
   }, [router]);
 
-  async function loadWorkshops() {
+  async function loadWorkshops(): Promise<WorkshopRow[] | null> {
     setLoading(true);
     setError("");
 
@@ -208,11 +289,50 @@ export default function Admin() {
               ? response.data.workshops
               : [];
 
-      setWorkshops(records.map(normalizeWorkshop));
+      const normalized = records.map(normalizeWorkshop);
+      setWorkshops(normalized);
+      return normalized;
     } catch (err: any) {
       setError(err?.message || "Unable to load workshops.");
+      return null;
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadAdminReports() {
+    setReportsLoading(true);
+    setReportsError("");
+
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        throw new Error("Your admin session has expired. Please log in again.");
+      }
+
+      const apiBase =
+        process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") ||
+        "http://localhost:5000/api";
+
+      const response = await fetch(`${apiBase}/progress/admin/reports`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.message || `Report request failed (${response.status}).`);
+      }
+
+      setAdminReports(data as AdminReports);
+    } catch (err: any) {
+      setReportsError(err?.message || "Unable to load assessment reports.");
+    } finally {
+      setReportsLoading(false);
     }
   }
 
@@ -221,6 +341,7 @@ export default function Admin() {
       loadWorkshops();
       loadOrganisations();
       loadUsers();
+      loadAdminReports();
     }
   }, [authorized]);
 
@@ -543,6 +664,98 @@ export default function Admin() {
     }
   }
 
+  function startTrainerEdit(workshop: WorkshopRow) {
+    // Prefer the actual saved MongoDB trainer ID, not the display-name field.
+    const savedTrainerId = getMongoId(workshop.trainerId);
+    const matchedTrainer = managedUsers.find((user) => {
+      const sameId = getMongoId(user._id) === savedTrainerId;
+      const sameName =
+        String(user.name || "").trim().toLowerCase() ===
+        String(workshop.facilitator || "").trim().toLowerCase();
+      return (
+        user.role === "facilitator" &&
+        user.status !== "Inactive" &&
+        (sameId || (!savedTrainerId && sameName))
+      );
+    });
+
+    setEditingTrainerWorkshopId(workshop.id);
+    setEditingTrainerId(savedTrainerId || getMongoId(matchedTrainer?._id));
+    setError("");
+    setNotice("");
+  }
+
+  async function saveTrainerAssignment(workshop: WorkshopRow) {
+    setError("");
+    setNotice("");
+
+    // Capture the selected value once so the request and validation use the same ID.
+    const selectedTrainerId = getMongoId(editingTrainerId);
+    const selectedTrainer = managedUsers.find(
+      (user) =>
+        getMongoId(user._id) === selectedTrainerId &&
+        user.role === "facilitator" &&
+        user.status !== "Inactive"
+    );
+
+    if (selectedTrainerId && !selectedTrainer) {
+      setError("The selected account is not an active facilitator. Refresh User Management and try again.");
+      return;
+    }
+
+    setTrainerSaving(true);
+    try {
+      const payload = {
+        trainer: selectedTrainerId || null,
+        facilitator: selectedTrainer?.name || "",
+      };
+
+      // Save to the backend first.
+      const updateResponse: any = await updateWorkshop(workshop.id, payload);
+      const responseTrainerId = getMongoId(
+        updateResponse?.trainer ?? updateResponse?.data?.trainer
+      );
+
+      if (selectedTrainerId && responseTrainerId && responseTrainerId !== selectedTrainerId) {
+        throw new Error("The server returned a different trainer than the one selected. The assignment was not confirmed.");
+      }
+
+      // Read the record back from the server. Do not show success unless the
+      // persisted trainer reference matches the selected MongoDB user ID.
+      const refreshedWorkshops = await loadWorkshops();
+      if (!refreshedWorkshops) {
+        throw new Error("The update request completed, but the programme could not be reloaded to verify the assignment.");
+      }
+
+      const refreshedWorkshop = refreshedWorkshops.find(
+        (item) => item.id === workshop.id
+      );
+
+      if (!refreshedWorkshop) {
+        throw new Error("The programme was not returned when verifying the update.");
+      }
+
+      if (refreshedWorkshop.trainerId !== selectedTrainerId) {
+        throw new Error(
+          `The server did not persist the selected trainer. Expected ID ${selectedTrainerId || "(unassigned)"}, but received ${refreshedWorkshop.trainerId || "(no trainer ID)"}. Check the PATCH /api/workshops/:id route and confirm it saves the trainer field.`
+        );
+      }
+
+      setNotice(
+        selectedTrainer
+          ? `${selectedTrainer.name} is now assigned to ${workshop.title}.`
+          : `Trainer removed from ${workshop.title}.`
+      );
+      setEditingTrainerWorkshopId(null);
+      setEditingTrainerId("");
+    } catch (err: any) {
+      setError(err?.message || "Unable to update trainer assignment.");
+      // Keep the editor open and retain the selected ID so the user can retry.
+    } finally {
+      setTrainerSaving(false);
+    }
+  }
+
   async function removeWorkshop(id: string) {
     if (!window.confirm("Are you sure you want to delete this workshop?")) {
       return;
@@ -642,6 +855,26 @@ export default function Admin() {
       ? Math.round((totalCompleted / totalRegistered) * 100)
       : 0;
 
+  // These totals are derived from the current backend responses, not sample data.
+  const totalLearners = managedUsers.filter(
+    (user) => String(user.role).toLowerCase() === "learner"
+  ).length;
+
+  const totalFacilitators = managedUsers.filter(
+    (user) => String(user.role).toLowerCase() === "facilitator"
+  ).length;
+
+  const activeAccounts = managedUsers.filter(
+    (user) => String(user.status || "Active").toLowerCase() !== "inactive"
+  ).length;
+
+  const totalOrganisations = organisations.length;
+  const totalUsersCount = managedUsers.length;
+
+  const programmeAnalytics = [...workshops].sort(
+    (a, b) => b.registered - a.registered
+  );
+
   async function openCountryProgramme(searchTitle: string) {
     try {
       setError("");
@@ -717,7 +950,12 @@ export default function Admin() {
 
             <button
               type="button"
-              onClick={loadWorkshops}
+              onClick={() => {
+                loadWorkshops();
+                loadOrganisations();
+                loadUsers();
+                loadAdminReports();
+              }}
               className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/20 sm:self-center"
             >
               <RefreshCw size={16} />
@@ -768,167 +1006,203 @@ export default function Admin() {
               Workspace overview
             </h3>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              A summary of your workshop activity.
+              Current programme and account totals from your workspace.
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             <div className={`${panel} p-5`}>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-[var(--muted)]">
-                  Total workshops
-                </span>
+                <span className="text-sm text-[var(--muted)]">Learning programmes</span>
                 <span className="rounded-xl bg-rose-500/10 p-3 text-blue-500">
                   <CalendarDays size={21} />
                 </span>
               </div>
-              <p className="mt-4 text-3xl font-bold text-[var(--text)]">
-                {totalWorkshops}
-              </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Workshops in your workspace
-              </p>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">{totalWorkshops}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">All programmes in the workspace</p>
             </div>
 
             <div className={`${panel} p-5`}>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-[var(--muted)]">
-                  Published
+                <span className="text-sm text-[var(--muted)]">Learners</span>
+                <span className="rounded-xl bg-rose-600/10 p-3 text-rose-700">
+                  <Users size={21} />
                 </span>
+              </div>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">{totalLearners}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Learner accounts</p>
+            </div>
+
+            <div className={`${panel} p-5`}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--muted)]">Facilitators</span>
+                <span className="rounded-xl bg-stone-500/10 p-3 text-stone-600">
+                  <GraduationCap size={21} />
+                </span>
+              </div>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">{totalFacilitators}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Trainer accounts</p>
+            </div>
+
+            <div className={`${panel} p-5`}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--muted)]">Published programmes</span>
                 <span className="rounded-xl bg-rose-600/10 p-3 text-rose-700">
                   <BookOpen size={21} />
                 </span>
               </div>
-              <p className="mt-4 text-3xl font-bold text-[var(--text)]">
-                {publishedCount}
-              </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Live workshops
-              </p>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">{publishedCount}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Available to enrolled learners</p>
             </div>
 
             <div className={`${panel} p-5`}>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-[var(--muted)]">
-                  Participants
-                </span>
-                <span className="rounded-xl bg-stone-500/10 p-3 text-stone-600">
+                <span className="text-sm text-[var(--muted)]">Total enrolments</span>
+                <span className="rounded-xl bg-teal-500/10 p-3 text-teal-700">
                   <Users size={21} />
                 </span>
               </div>
-              <p className="mt-4 text-3xl font-bold text-[var(--text)]">
-                {totalRegistered}
-              </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Total registrations
-              </p>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">{totalRegistered}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Sum of programme registrations</p>
             </div>
 
             <div className={`${panel} p-5`}>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-[var(--muted)]">
-                  Completion rate
-                </span>
+                <span className="text-sm text-[var(--muted)]">Completion rate</span>
                 <span className="rounded-xl bg-rose-600/10 p-3 text-rose-700">
-                  <GraduationCap size={21} />
+                  <BarChart3 size={21} />
                 </span>
               </div>
-              <p className="mt-4 text-3xl font-bold text-[var(--text)]">
-                {completionRate}%
-              </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Based on recorded completions
-              </p>
+              <p className="mt-4 text-3xl font-bold text-[var(--text)]">{completionRate}%</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Based on recorded programme completions</p>
             </div>
           </div>
         </section>
 
         {/* Analytics */}
-        <section id="analytics" className="grid gap-4 xl:grid-cols-3">
+        <section id="analytics" className="grid scroll-mt-24 gap-4 xl:grid-cols-3">
           <div className={`${panel} p-5 xl:col-span-2`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="font-bold text-[var(--text)]">
-                  Participation trend
-                </h3>
+                <h3 className="font-bold text-[var(--text)]">Programme performance</h3>
                 <p className="mt-1 text-xs text-[var(--muted)]">
-                  Illustrative sample trend, not live registration history.
+                  Enrolments and completions from the current programme records.
                 </p>
               </div>
-
-              <span className="rounded-lg bg-teal-500/10 px-3 py-1.5 text-xs font-semibold text-rose-700">
-                Sample data
+              <span className="rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                Backend data
               </span>
             </div>
 
-            <div className="mt-6 flex h-48 items-end gap-3 sm:gap-5">
-              {trendData.map((item) => (
-                <div
-                  key={item.week}
-                  className="flex flex-1 flex-col items-center gap-2"
-                >
-                  <span className="text-xs font-semibold text-[var(--text)]">
-                    {item.participants}
-                  </span>
+            {programmeAnalytics.length === 0 ? (
+              <div className="mt-5 rounded-xl border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted)]">
+                No programme data is available yet.
+              </div>
+            ) : (
+              <div className="mt-5 space-y-5">
+                {programmeAnalytics.map((programme) => {
+                  const rate = programme.registered > 0
+                    ? Math.min(100, Math.round((programme.completed / programme.registered) * 100))
+                    : 0;
+                  const occupancy = programme.capacity > 0
+                    ? Math.min(100, Math.round((programme.registered / programme.capacity) * 100))
+                    : 0;
 
-                  <div className="flex h-36 w-full items-end overflow-hidden rounded-t-lg bg-[var(--surface-2)]">
-                    <div
-                      className="w-full rounded-t-lg bg-gradient-to-t from-rose-800 to-rose-500 transition-all"
-                      style={{
-                        height: `${(item.participants / 100) * 100}%`,
-                      }}
-                    />
-                  </div>
-
-                  <span className="text-xs text-[var(--muted)]">
-                    {item.week}
-                  </span>
-                </div>
-              ))}
-            </div>
+                  return (
+                    <div key={programme.id} className="space-y-2">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-semibold text-[var(--text)]">{programme.title}</p>
+                          <p className="mt-1 text-xs text-[var(--muted)]">
+                            {programme.registered} enrolled · {programme.completed} completed · Capacity {programme.capacity || "not set"}
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--muted)]">
+                          {programme.status}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-[var(--surface-2)]">
+                          <div className="h-full rounded-full bg-gradient-to-r from-rose-800 to-rose-500" style={{ width: `${rate}%` }} />
+                        </div>
+                        <span className="w-12 text-right text-xs font-semibold text-[var(--text)]">{rate}%</span>
+                      </div>
+                      <p className="text-[11px] text-[var(--muted)]">Capacity used: {occupancy}%</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          <div className={`${panel} flex flex-col justify-between p-5`}>
-            <div>
+          <div className={`${panel} p-5`}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-[var(--text)]">People and organisations</h3>
+              <Building2 className="text-rose-600" size={21} />
+            </div>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Account and organisation totals currently available to the admin workspace.
+            </p>
+
+            <div className="mt-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+                <span className="text-sm text-[var(--muted)]">Total accounts</span>
+                <strong className="text-[var(--text)]">{totalUsersCount}</strong>
+              </div>
+              <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+                <span className="text-sm text-[var(--muted)]">Active accounts</span>
+                <strong className="text-[var(--text)]">{activeAccounts}</strong>
+              </div>
+              <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+                <span className="text-sm text-[var(--muted)]">Organisations</span>
+                <strong className="text-[var(--text)]">{totalOrganisations}</strong>
+              </div>
               <div className="flex items-center justify-between">
-                <h3 className="font-bold text-[var(--text)]">
-                  Learning progress
-                </h3>
-                <BarChart3 className="text-rose-600" size={21} />
+                <span className="text-sm text-[var(--muted)]">Draft programmes</span>
+                <strong className="text-[var(--text)]">{Math.max(0, totalWorkshops - publishedCount)}</strong>
               </div>
+            </div>
 
-              <p className="mt-2 text-sm text-[var(--muted)]">
-                Recorded participant completions.
+            <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="text-sm font-semibold text-[var(--text)]">Assessment snapshot</h4>
+                <button
+                  type="button"
+                  onClick={loadAdminReports}
+                  disabled={reportsLoading}
+                  className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-60"
+                >
+                  <RefreshCw size={13} className={reportsLoading ? "animate-spin" : ""} />
+                  Refresh reports
+                </button>
+              </div>
+              {reportsError ? (
+                <p className="mt-3 text-xs text-rose-600">{reportsError}</p>
+              ) : (
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-xs text-[var(--muted)]">Pre-quiz average</p>
+                    <p className="mt-1 text-xl font-bold text-[var(--text)]">{reportPercent(adminReports?.summary.preQuizAverage)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[var(--muted)]">Post-quiz average</p>
+                    <p className="mt-1 text-xl font-bold text-[var(--text)]">{reportPercent(adminReports?.summary.postQuizAverage)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[var(--muted)]">Scenario accuracy</p>
+                    <p className="mt-1 text-xl font-bold text-[var(--text)]">{reportPercent(adminReports?.summary.scenarioAccuracy)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[var(--muted)]">Quiz attempts</p>
+                    <p className="mt-1 text-xl font-bold text-[var(--text)]">{adminReports?.summary.totalQuizAttempts ?? "—"}</p>
+                  </div>
+                </div>
+              )}
+              <p className="mt-3 text-[11px] text-[var(--muted)]">
+                {adminReports?.generatedAt
+                  ? `Report updated ${new Date(adminReports.generatedAt).toLocaleString()}`
+                  : reportsLoading ? "Loading live assessment data…" : "Assessment report has not loaded yet."}
               </p>
-            </div>
-
-            <div className="my-6">
-              <div className="mb-2 flex items-end justify-between">
-                <span className="text-4xl font-bold text-[var(--text)]">
-                  {completionRate}%
-                </span>
-                <span className="text-xs text-[var(--muted)]">
-                  Completion
-                </span>
-              </div>
-
-              <div className="h-3 overflow-hidden rounded-full bg-[var(--surface-2)]">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-rose-700 to-rose-500 transition-all"
-                  style={{
-                    width: `${Math.min(completionRate, 100)}%`,
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between border-t border-[var(--border)] pt-4 text-sm">
-              <span className="text-[var(--muted)]">
-                Completed participants
-              </span>
-              <strong className="text-[var(--text)]">
-                {totalCompleted}
-              </strong>
             </div>
           </div>
         </section>
@@ -1222,6 +1496,60 @@ export default function Admin() {
 
                       <td className="px-5 py-4">
                         <div className="flex items-center justify-end gap-2">
+                          {editingTrainerWorkshopId === w.id ? (
+                            <div className="flex min-w-[260px] flex-wrap items-center justify-end gap-2">
+                              <select
+                                aria-label={`Assign trainer for ${w.title}`}
+                                value={editingTrainerId}
+                                onChange={(e) => setEditingTrainerId(e.target.value)}
+                                className="max-w-[190px] rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-xs text-[var(--text)]"
+                              >
+                                <option value="">Unassigned</option>
+                                {managedUsers
+                                  .filter(
+                                    (user) =>
+                                      user.role === "facilitator" &&
+                                      String(user.status || "Active").toLowerCase() === "active" &&
+                                      Boolean(getMongoId(user._id))
+                                  )
+                                  .map((user) => (
+                                    <option key={getMongoId(user._id)} value={getMongoId(user._id)}>
+                                      {user.name} — {user.email}
+                                    </option>
+                                  ))}
+                              </select>
+                              <span className="w-full text-right text-[10px] text-[var(--muted)]">
+                                {editingTrainerId
+                                  ? `Selected: ${managedUsers.find((user) => getMongoId(user._id) === editingTrainerId)?.email || "Loading trainer account…"}`
+                                  : "No trainer assigned"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => saveTrainerAssignment(w)}
+                                disabled={trainerSaving}
+                                className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                              >
+                                {trainerSaving ? "Saving…" : "Save"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingTrainerWorkshopId(null); setEditingTrainerId(""); }}
+                                className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs text-[var(--text)]"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startTrainerEdit(w)}
+                              title="Change assigned trainer"
+                              aria-label={`Change trainer for ${w.title}`}
+                              className="rounded-lg border border-[var(--border)] p-2 text-[var(--muted)] transition hover:border-rose-500/40 hover:text-rose-600"
+                            >
+                              <Pencil size={16} />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => router.push(`/admin/programs/${w.id}`)}
@@ -1546,6 +1874,156 @@ export default function Admin() {
     </button>
   </div>
 </section>
+
+        {/* Assessments and learner performance */}
+        <section id="assessments" className={`${panel} scroll-mt-24 overflow-hidden`}>
+          <div className="flex flex-col justify-between gap-3 border-b border-[var(--border)] p-5 sm:flex-row sm:items-center">
+            <div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="text-rose-600" size={20} />
+                <h3 className="text-lg font-bold text-[var(--text)]">Assessments & learner performance</h3>
+              </div>
+              <p className="mt-1 text-sm text-[var(--muted)]">Saved quiz scores, scenario responses and learner progress from MongoDB.</p>
+            </div>
+            <button
+              type="button"
+              onClick={loadAdminReports}
+              disabled={reportsLoading}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-60"
+            >
+              <RefreshCw size={15} className={reportsLoading ? "animate-spin" : ""} />
+              {reportsLoading ? "Refreshing…" : "Refresh reports"}
+            </button>
+          </div>
+
+          <div className="p-5">
+            {reportsError && (
+              <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-600">{reportsError}</div>
+            )}
+            {reportsLoading && !adminReports ? (
+              <div className="rounded-xl border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted)]">Loading assessment reports…</div>
+            ) : !adminReports || adminReports.learners.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[var(--border)] p-8 text-center">
+                <Users className="mx-auto mb-2 text-[var(--muted)]" size={28} />
+                <p className="font-semibold text-[var(--text)]">No learner assessment records yet</p>
+                <p className="mt-1 text-sm text-[var(--muted)]">Assessment results will appear here after learners complete quizzes or scenarios.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[850px] border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-[var(--border)] text-xs uppercase tracking-wide text-[var(--muted)]">
+                      <th className="px-3 py-3 font-semibold">Learner / programme</th>
+                      <th className="px-3 py-3 font-semibold">Progress</th>
+                      <th className="px-3 py-3 font-semibold">Pre-quiz</th>
+                      <th className="px-3 py-3 font-semibold">Post-quiz</th>
+                      <th className="px-3 py-3 font-semibold">Scenarios</th>
+                      <th className="px-3 py-3 font-semibold">Certificate readiness</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminReports.learners.map((learner, index) => (
+                      <tr key={`${learner.learnerId}-${learner.programmeId}-${index}`} className="border-b border-[var(--border)] last:border-0">
+                        <td className="px-3 py-4">
+                          <p className="font-semibold text-[var(--text)]">{learner.learnerName}</p>
+                          <p className="mt-0.5 text-xs text-[var(--muted)]">{learner.learnerEmail}</p>
+                          <p className="mt-1 text-xs text-rose-600">{learner.programmeName}</p>
+                        </td>
+                        <td className="px-3 py-4 font-semibold text-[var(--text)]">{learner.progressPercentage}%</td>
+                        <td className="px-3 py-4 text-[var(--text)]">{learner.preQuiz ? `${learner.preQuiz.score}/${learner.preQuiz.total} (${learner.preQuiz.percentage}%)` : "Not attempted"}</td>
+                        <td className="px-3 py-4 text-[var(--text)]">{learner.postQuiz ? `${learner.postQuiz.score}/${learner.postQuiz.total} (${learner.postQuiz.percentage}%)` : "Not attempted"}</td>
+                        <td className="px-3 py-4 text-[var(--text)]">{learner.scenariosCompleted}/{learner.scenariosTotal} · {learner.scenariosCorrect} correct</td>
+                        <td className="px-3 py-4">
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${learner.certificateEligible ? "bg-emerald-500/10 text-emerald-600" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}>
+                            {learner.certificateEligible ? "Eligible" : "In progress"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Certificate readiness report */}
+        <section id="certificates" className={`${panel} scroll-mt-24 overflow-hidden`}>
+          <div className="border-b border-[var(--border)] p-5">
+            <div className="flex items-center gap-2">
+              <GraduationCap className="text-rose-600" size={21} />
+              <h3 className="text-lg font-bold text-[var(--text)]">Certificates</h3>
+            </div>
+            <p className="mt-1 text-sm text-[var(--muted)]">Learners meeting the current assessment-based certificate readiness rule.</p>
+          </div>
+          <div className="p-5">
+            <div className="mb-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                <p className="text-xs text-[var(--muted)]">Eligible learners</p>
+                <p className="mt-1 text-2xl font-bold text-[var(--text)]">{adminReports?.summary.certificateEligibleCount ?? "—"}</p>
+              </div>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                <p className="text-xs text-[var(--muted)]">Learners with saved progress</p>
+                <p className="mt-1 text-2xl font-bold text-[var(--text)]">{adminReports?.summary.learnersWithProgress ?? "—"}</p>
+              </div>
+            </div>
+            <p className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-5 text-[var(--muted)]">
+              This report shows eligibility based on saved quiz and scenario results. It does not represent a separately stored certificate issuance record; certificate issuance tracking can be added as a distinct backend feature.
+            </p>
+            {!adminReports || adminReports.learners.filter((learner) => learner.certificateEligible).length === 0 ? (
+              <p className="rounded-xl border border-dashed border-[var(--border)] p-6 text-center text-sm text-[var(--muted)]">No learners currently meet the certificate readiness rule.</p>
+            ) : (
+              <div className="space-y-3">
+                {adminReports.learners.filter((learner) => learner.certificateEligible).map((learner, index) => (
+                  <article key={`${learner.learnerId}-${learner.programmeId}-${index}`} className="flex flex-col justify-between gap-2 rounded-xl border border-[var(--border)] p-4 sm:flex-row sm:items-center">
+                    <div>
+                      <p className="font-semibold text-[var(--text)]">{learner.learnerName}</p>
+                      <p className="mt-0.5 text-xs text-[var(--muted)]">{learner.learnerEmail}</p>
+                      <p className="mt-1 text-xs text-rose-600">{learner.programmeName}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-lg bg-[var(--surface-2)] px-3 py-2 text-[var(--text)]">Pre: {reportPercent(learner.preQuiz?.percentage)}</span>
+                      <span className="rounded-lg bg-[var(--surface-2)] px-3 py-2 text-[var(--text)]">Post: {reportPercent(learner.postQuiz?.percentage)}</span>
+                      <span className="rounded-lg bg-emerald-500/10 px-3 py-2 font-semibold text-emerald-600">Eligible</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Admin workspace settings */}
+        <section id="settings" className={`${panel} scroll-mt-24 p-5 sm:p-6`}>
+          <div className="mb-5 flex items-center gap-2">
+            <Settings className="text-rose-600" size={21} />
+            <h3 className="text-lg font-bold text-[var(--text)]">Workspace settings</h3>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Admin account</p>
+              <p className="mt-2 font-semibold text-[var(--text)]">{adminAccount.name}</p>
+              <p className="mt-1 break-all text-sm text-[var(--muted)]">{adminAccount.email || "No email available"}</p>
+              <p className="mt-2 text-xs text-[var(--muted)]">Role: Administrator</p>
+              <a href="#users" className="mt-3 inline-block text-xs font-semibold text-rose-600 hover:underline">Open user management →</a>
+            </div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Display preferences</p>
+              <p className="mt-2 text-sm text-[var(--text)]">Light and dark appearance is controlled by the theme button in the top bar.</p>
+              <p className="mt-2 text-xs text-[var(--muted)]">Use the sun/moon icon at the top-right of the dashboard to change the appearance.</p>
+            </div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">API connection</p>
+              <p className="mt-2 break-all text-sm text-[var(--text)]">{process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api (local default)"}</p>
+              <p className="mt-2 text-xs text-[var(--muted)]">Admin reporting is loaded from the authenticated backend route.</p>
+            </div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Notification centre</p>
+              <p className="mt-2 text-sm text-[var(--text)]">Open the bell in the top bar to review the current role-specific notifications.</p>
+              <p className="mt-2 text-xs text-[var(--muted)]">Read status currently stays in this browser; shared notification history requires backend storage.</p>
+            </div>
+          </div>
+        </section>
 
         {/* Footer note */}
         <div className="flex flex-wrap items-center justify-between gap-2 pb-3 text-xs text-[var(--muted)]">

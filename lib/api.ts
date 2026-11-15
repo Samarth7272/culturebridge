@@ -126,12 +126,10 @@ export type Organisation = {
   createdAt?: string;
 };
 
-// Get all organisations
 export async function getOrganisations(): Promise<Organisation[]> {
   return apiRequest("/organisations");
 }
 
-// Add organisation
 export async function addOrganisation(
   data: Partial<Organisation>
 ) {
@@ -141,7 +139,6 @@ export async function addOrganisation(
   });
 }
 
-// Update organisation
 export async function updateOrganisation(
   id: string,
   data: Partial<Organisation>
@@ -152,12 +149,16 @@ export async function updateOrganisation(
   });
 }
 
-// Delete organisation
 export async function deleteOrganisation(id: string) {
   return apiRequest(`/organisations/${id}`, {
     method: "DELETE",
   });
 }
+
+// =====================================
+// USER MANAGEMENT APIs
+// =====================================
+
 export type ManagedUser = {
   _id: string;
   name: string;
@@ -206,7 +207,100 @@ export async function deleteUser(id: string) {
     method: "DELETE",
   });
 }
-// Fetch one programme/workshop by ID.
+
+// Fetch one programme/workshop by ID
 export async function getWorkshop(id: string) {
   return apiRequest(`/workshops/${id}`);
+}
+
+// =====================================
+// LEARNER PROGRESS APIs
+// =====================================
+
+export type QuizType = "pre" | "post";
+
+export type QuizResult = {
+  _id?: string;
+  quizType: QuizType;
+  score: number;
+  total: number;
+  answers: number[];
+  completedAt?: string;
+};
+
+export type ScenarioResult = {
+  _id?: string;
+  scenarioId: string;
+  selectedOption: number;
+  correct: boolean;
+  completedAt?: string;
+};
+
+export type LearnerProgress = {
+  _id: string;
+  learner: string;
+  workshop: string;
+  completedLessons: string[];
+  currentLesson: string | null;
+  progressPercentage: number;
+  quizResults: QuizResult[];
+  scenarioResults: ScenarioResult[];
+  completedAt: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+// Get progress for all my programmes
+export async function getMyProgress(): Promise<LearnerProgress[]> {
+  return apiRequest("/progress/my");
+}
+
+// Get progress for one programme
+export async function getWorkshopProgress(
+  workshopId: string
+): Promise<LearnerProgress> {
+  return apiRequest(`/progress/${workshopId}`);
+}
+
+// Mark a lesson as completed
+export async function markLessonCompleted(
+  workshopId: string,
+  lessonId: string
+): Promise<LearnerProgress> {
+  return apiRequest(
+    `/progress/${workshopId}/lessons/${lessonId}`,
+    {
+      method: "PATCH",
+    }
+  );
+}
+
+// Save quiz answers.
+// The backend calculates the score securely.
+export async function saveQuizAnswers(
+  workshopId: string,
+  data: {
+    quizType: QuizType;
+    answers: number[];
+  }
+) {
+  return apiRequest(`/progress/${workshopId}/quizzes`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// Save one scenario answer.
+// The backend determines whether it is correct.
+export async function saveScenarioAnswer(
+  workshopId: string,
+  data: {
+    scenarioId: string;
+    selectedOption: number;
+  }
+) {
+  return apiRequest(`/progress/${workshopId}/scenarios`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
 }
