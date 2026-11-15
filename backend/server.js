@@ -38,6 +38,7 @@ app.use("/api/workshops", require("./routes/workshops"));
 app.use("/api/progress", require("./routes/progress"));
 app.use("/api/organisations", require("./routes/organisations"));
 app.use("/api/users", require("./routes/users"));
+app.use("/api/ai", require("./routes/ai"));
 
 // Backend health check
 app.get("/", (req, res) => {

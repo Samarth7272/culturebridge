@@ -1,5 +1,5 @@
 "use client";
-
+import AiCoach from "@/components/AiCoach";
 import { useState, useEffect } from "react";
 import {
   Award,
@@ -1770,6 +1770,7 @@ export default function Learner() {
           )}
         </section>
       </div>
+      <AiCoach />
     </DashboardLayout>
   );
 }
