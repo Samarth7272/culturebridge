@@ -9,6 +9,8 @@ const PORT = process.env.PORT || 5000;
 // Allowed frontend domains
 const allowedOrigins = [
   "http://localhost:3000",
+  "https://culturebridge-one.vercel.app",
+
   ...(process.env.CLIENT_URLS || process.env.CLIENT_URL || "")
     .split(",")
     .map((url) => url.trim())
@@ -18,8 +20,16 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow tools like Postman and requests from configured domains
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow native mobile apps and tools without a browser origin.
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      // Allow local development on any localhost port.
+      const isLocalDevelopment =
+        /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+
+      if (allowedOrigins.includes(origin) || isLocalDevelopment) {
         return callback(null, true);
       }
 
